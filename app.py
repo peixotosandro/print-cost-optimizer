@@ -7,16 +7,32 @@ from datetime import datetime
 from typing import List, Dict, Any
 import time
 
-# === Configuração da Página ===
-st.set_page_config(page_title="Print Cost Optimizer", layout="wide", initial_sidebar_state="expanded")
-st.title("Print Cost Optimizer Agent")
+# === CONFIGURAÇÃO DA PÁGINA ===
+st.set_page_config(
+    page_title="Print Cost Optimizer",
+    layout="wide",
+    initial_sidebar_state="expanded",
+    menu_items={'About': 'Agente de IA para otimização de custos com Lexmark CFM.'}
+)
+
+# === ESTILO ===
+st.markdown("""
+<style>
+    .big-font { font-size: 28px !important; font-weight: bold; color: #ffffff; }
+    .stButton>button { border-radius: 8px; }
+    .stButton>button[kind="primary"] { background-color: #ff4b4b; }
+</style>
+""", unsafe_allow_html=True)
+
+# === TÍTULO ===
+st.markdown('<p class="big-font">Print Cost Optimizer Agent</p>', unsafe_allow_html=True)
 st.markdown("**Análise em tempo real com API Lexmark Cloud Fleet Management**")
 
-# === Logging ===
+# === LOGGING ===
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# === Cliente Lexmark CFM ===
+# === CLIENTE LEXMARK CFM ===
 class LexmarkCFMClient:
     def __init__(self, client_id: str, client_secret: str, region: str = 'us'):
         self.client_id = client_id
@@ -37,56 +53,35 @@ class LexmarkCFMClient:
             "client_secret": self.client_secret
         }
         try:
-            response = requests.post(self.token_url, json=payload)
+            response = requests.post(self.token_url, json=payload, timeout=10)
             response.raise_for_status()
             data = response.json()
             self.access_token = data['access_token']
-            self.token_expiry = int(time.time()) + 3500  # ~1h
+            self.token_expiry = int(time.time()) + 3500
             return self.access_token
         except Exception as e:
             st.error(f"Erro ao obter token: {e}")
             raise
 
-    def get_all_printers(self) -> List[Dict[str, Any]]:
-        token = self._get_token()
-        headers = {'Authorization': f'Bearer {token}', 'Accept': 'application/json'}
-        all_printers = []
-        page = 0
-        progress = st.progress(0)
+    def _get_headers(self):
+        return {
+            'Authorization': f'Bearer {self._get_token()}',
+            'Accept': 'application/json'
+        }
 
-        while True:
-            params = {'pageNumber': page, 'pageSize': 200}
-            try:
-                response = requests.get(f"{self.base_url}/v1.0/assets", headers=headers, params=params)
-                response.raise_for_status()
-                data = response.json()
-                content = data.get('content', [])
-                all_printers.extend(content)
-                progress.progress((page + 1) / (page + 2) if content else 1.0)
-                if data.get('last', True): break
-                page += 1
-            except Exception as e:
-                st.error(f"Erro na página {page}: {e}")
-                break
-        progress.empty()
-        return all_printers
-
-# === Agente de Análise ===
+# === AGENTE DE ANÁLISE ===
 class PrintCostOptimizerAgent:
     def __init__(self, printers: List[Dict[str, Any]]):
         self.printers = printers
         self.reports = []
 
     def analyze(self):
-        progress_bar = st.progress(0)
-        for i, printer in enumerate(self.printers):
+        for printer in self.printers:
             try:
                 report = self._analyze_single_printer(printer)
                 self.reports.append(report)
             except Exception as e:
-                logger.warning(f"Erro ao analisar {printer.get('serialNumber')}: {e}")
-            progress_bar.progress((i + 1) / len(self.printers))
-        progress_bar.empty()
+                logger.warning(f"Erro ao analisar {printer.get('serialNumber', 'N/A')}: {e}")
 
     def _analyze_single_printer(self, printer: Dict[str, Any]) -> Dict[str, Any]:
         report = {
@@ -101,110 +96,149 @@ class PrintCostOptimizerAgent:
         supplies = printer.get('supplies', [])
         alerts = printer.get('alerts', [])
 
-        # 1. Cor
+        # 1. Alta cor
         color = counters.get('colorPrintSideCount', 0)
         total = counters.get('printSideCount', 1)
         color_ratio = color / total if total > 0 else 0
         if color_ratio > 0.7:
-            report["insights"].append(f"Cor: {color_ratio:.1%}")
-            report["policies"].append("P&B padrão para não-críticos")
+            report["insights"].append(f"Cor: {color_ratio:.0%}")
+            report["policies"].append("P&B padrão")
             report["savings_potential"] += 120
 
-        # 2. Duplex
+        # 2. Baixo duplex
         duplex = counters.get('duplexSheetCount', 0)
         total_sheets = counters.get('printSheetCount', 1)
         duplex_ratio = duplex / total_sheets if total_sheets > 0 else 0
         if duplex_ratio < 0.5:
-            report["insights"].append(f"Duplex: {duplex_ratio:.1%}")
-            report["policies"].append("Ativar duplex padrão")
+            report["insights"].append(f"Duplex: {duplex_ratio:.0%}")
+            report["policies"].append("Ativar duplex")
             report["savings_potential"] += 80
 
-        # 3. Toner Baixo
+        # 3. Toner baixo
         low_toner = [s for s in supplies if s.get('percentRemaining', 100) < 20 and s['type'] == 'Toner']
         if low_toner:
             colors = ", ".join([s['color'] for s in low_toner])
-            report["insights"].append(f"Toner baixo: {colors}")
-            report["policies"].append("Reposição automática")
+            report["insights"].append(f"Toner: {colors}")
+            report["policies"].append("Reposição auto")
             report["savings_potential"] += 50 * len(low_toner)
 
         # 4. Alertas
-        critical = [a['issue'] for a in alerts if 'ERROR' in a.get('status', '')]
+        critical = [a['issue'] for a in alerts if a.get('status') in ['ERROR', 'CRITICAL']]
         if critical:
             report["insights"].append(f"Erro: {len(critical)}")
-            report["policies"].append("Manutenção urgente")
+            report["policies"].append("Manutenção")
 
         return report
 
-    def get_summary(self):
-        if not self.reports: return {}
-        df = pd.DataFrame(self.reports)
-        return {
-            "total_printers": len(self.reports),
-            "total_savings": df['savings_potential'].sum(),
-            "high_impact": df[df['savings_potential'] > 100],
-            "policies": list(set(p for r in self.reports for p in r['policies']))
-        }
-
-# === Interface Streamlit ===
+# === SIDEBAR ===
 with st.sidebar:
     st.header("Lexmark CFM API")
     client_id = st.text_input("Client ID", type="password")
     client_secret = st.text_input("Client Secret", type="password")
     region = st.selectbox("Região", ["us", "eu"])
-    
-    if st.button("Conectar e Analisar", type="primary"):
-        if client_id and client_secret:
-            st.session_state.connected = True
-            st.session_state.client_id = client_id
-            st.session_state.client_secret = client_secret
-            st.session_state.region = region
-        else:
-            st.error("Preencha as credenciais")
 
-if not st.session_state.get("connected"):
-    st.info("Configure as credenciais da API Lexmark CFM no menu lateral.")
-    st.stop()
+    col1, col2 = st.columns(2)
+    with col1:
+        start_btn = st.button("Conectar e Analisar", type="primary", use_container_width=True)
+    with col2:
+        stop_btn = st.button("Parar", type="secondary", use_container_width=True)
 
-# === Execução ===
-cfm = LexmarkCFMClient(st.session_state.client_id, st.session_state.client_secret, st.session_state.region)
+# === INICIAR ===
+if start_btn:
+    if not client_id or not client_secret:
+        st.error("Preencha Client ID e Secret")
+        st.stop()
 
-with st.spinner("Conectando à API Lexmark CFM..."):
-    printers = cfm.get_all_printers()
+    st.session_state.reports = []
+    st.session_state.stop = False
+    st.session_state.page = 0
+    st.rerun()
 
-st.success(f"{len(printers)} impressoras carregadas com sucesso!")
+# === EXECUÇÃO PROGRESSIVA ===
+if st.session_state.get("reports") is not None and not st.session_state.get("stop", False):
+    cfm = LexmarkCFMClient(client_id, client_secret, region)
 
-with st.spinner("Analisando com IA..."):
-    agent = PrintCostOptimizerAgent(printers)
-    agent.analyze()
+    status_ph = st.empty()
+    metrics_ph = st.empty()
+    table_ph = st.empty()
+    policies_ph = st.empty()
 
-summary = agent.get_summary()
+    all_reports = st.session_state.reports
+    page = st.session_state.page
 
-# === Dashboard ===
-col1, col2, col3, col4 = st.columns(4)
-with col1:
-    st.metric("Impressoras", summary["total_printers"])
-with col2:
-    st.metric("Economia Potencial", f"R$ {summary['total_savings']:,.0f}/mês")
-with col3:
-    st.metric("Alta Prioridade", len(summary["high_impact"]))
-with col4:
-    st.metric("Políticas Únicas", len(summary["policies"]))
+    while not st.session_state.stop:
+        try:
+            with status_ph.container():
+                st.info(f"Buscando página {page + 1}...")
 
-# === Tabela de Alta Prioridade ===
-if not summary["high_impact"].empty:
-    st.subheader("Impressoras com Maior Potencial de Economia")
-    df_high = summary["high_impact"][['id', 'model', 'savings_potential', 'insights', 'policies']].copy()
-    df_high['savings_potential'] = df_high['savings_potential'].apply(lambda x: f"R$ {x:,.0f}")
-    df_high['insights'] = df_high['insights'].apply(lambda x: " | ".join(x))
-    df_high['policies'] = df_high['policies'].apply(lambda x: " | ".join(x))
-    st.dataframe(df_high, use_container_width=True)
-    
-    csv = df_high.to_csv(index=False).encode()
-    st.download_button("Baixar Relatório CSV", csv, "economia_alta.csv", "text/csv")
+            response = requests.get(
+                f"{cfm.base_url}/v1.0/assets",
+                headers=cfm._get_headers(),
+                params={"pageNumber": page, "pageSize": 200},
+                timeout=15
+            )
+            response.raise_for_status()
+            data = response.json()
+            printers_page = data.get('content', [])
 
-# === Políticas Globais ===
-st.subheader("Políticas Recomendadas (Globais)")
-for policy in summary["policies"]:
-    st.markdown(f"- {policy}")
+            if not printers_page:
+                break
 
-st.caption(f"Última análise: {datetime.now().strftime('%d/%m/%Y %H:%M')}")
+            agent = PrintCostOptimizerAgent(printers_page)
+            agent.analyze()
+            all_reports.extend(agent.reports)
+
+            st.session_state.reports = all_reports
+            st.session_state.page = page + 1
+
+            df = pd.DataFrame(all_reports)
+            total_savings = df['savings_potential'].sum()
+            high_impact = df[df['savings_potential'] > 100]
+
+            with status_ph.container():
+                st.success(f"Página {page + 1} • {len(all_reports)} impressoras")
+
+            with metrics_ph.container():
+                c1, c2, c3, c4 = st.columns(4)
+                c1.metric("Impressoras", len(all_reports))
+                c2.metric("Economia Atual", f"R$ {total_savings:,.0f}")
+                c3.metric("Alta Prioridade", len(high_impact))
+                c4.metric("Páginas", page + 1)
+
+            with table_ph.container():
+                if not high_impact.empty:
+                    df_display = high_impact[['id', 'model', 'savings_potential', 'insights']].copy()
+                    df_display['savings_potential'] = df_display['savings_potential'].apply(lambda x: f"R$ {x:,.0f}")
+                    df_display['insights'] = df_display['insights'].apply(lambda x: " | ".join(x))
+                    st.dataframe(df_display, use_container_width=True, hide_index=True)
+
+            with policies_ph.container():
+                policies = list(set(p for r in all_reports for p in r['policies']))
+                if policies:
+                    st.markdown("**Políticas:** " + " • ".join(policies[:6]))
+
+            page += 1
+            if data.get('last', False):
+                break
+
+        except Exception as e:
+            st.error(f"Erro na página {page}: {e}")
+            break
+
+    # FINAL
+    total_savings = pd.DataFrame(all_reports)['savings_potential'].sum()
+    st.success(f"**Completo!** {len(all_reports)} impressoras • R$ {total_savings:,.0f}/mês")
+    csv = pd.DataFrame(all_reports).to_csv(index=False).encode()
+    st.download_button(
+        "Baixar Relatório Completo",
+        csv,
+        "relatorio_completo.csv",
+        "text/csv",
+        use_container_width=True
+    )
+    st.caption(f"Atualizado: {datetime.now().strftime('%d/%m/%Y %H:%M')}")
+
+# === PARAR ===
+if stop_btn and st.session_state.get("reports") is not None:
+    st.session_state.stop = True
+    st.rerun()
