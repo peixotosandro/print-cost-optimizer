@@ -5,6 +5,7 @@ import requests
 import logging
 from datetime import datetime
 from typing import List, Dict, Any
+import time  # <-- ADICIONADO
 
 # === CONFIGURAÇÃO DA PÁGINA ===
 st.set_page_config(
@@ -27,7 +28,7 @@ st.markdown("""
 st.markdown('<p class="big-font">Print Cost Optimizer Agent</p>', unsafe_allow_html=True)
 st.markdown("**Análise em tempo real com API Lexmark Cloud Fleet Management**")
 
-# === PLACEHOLDERS GLOBAIS (DASHBOARD SEMPRE VISÍVEL) ===
+# === PLACEHOLDERS GLOBAIS ===
 status_ph = st.empty()
 metrics_ph = st.empty()
 table_ph = st.empty()
@@ -137,14 +138,14 @@ class PrintCostOptimizerAgent:
 # === SIDEBAR ===
 with st.sidebar:
     st.header("Lexmark CFM API")
-    client_id = st.text_input("Client ID", type="password")
-    client_secret = st.text_input("Client Secret", type="password")
-    region = st.selectbox("Região", ["us", "eu"])
+    client_id = st.text_input("Client ID", type="password", key="client_id")
+    client_secret = st.text_input("Client Secret", type="password", key="client_secret")
+    region = st.selectbox("Região", ["us", "eu"], key="region")
 
     st.markdown("---")
-    start_btn = st.button("Conectar e Analisar", type="primary", use_container_width=True)
+    start_btn = st.button("Conectar e Analisar", type="primary", use_container_width=True, key="start")
     st.markdown("<br>", unsafe_allow_html=True)
-    stop_btn = st.button("Parar Análise", type="secondary", use_container_width=True)
+    stop_btn = st.button("Parar Análise", type="secondary", use_container_width=True, key="stop")
 
 # === INICIAR ANÁLISE ===
 if start_btn:
@@ -152,7 +153,11 @@ if start_btn:
         st.error("Preencha Client ID e Secret")
         st.stop()
 
-    st.session_state.clear()
+    # SALVA CREDENCIAIS NO SESSION STATE
+    st.session_state.client_id = client_id
+    st.session_state.client_secret = client_secret
+    st.session_state.region = region
+
     st.session_state.reports = []
     st.session_state.page = 0
     st.session_state.is_running = True
@@ -162,6 +167,11 @@ if start_btn:
 if stop_btn and st.session_state.get("is_running"):
     st.session_state.is_running = False
     st.rerun()
+
+# === PEGA CREDENCIAIS DO SESSION STATE ===
+client_id = st.session_state.get("client_id")
+client_secret = st.session_state.get("client_secret")
+region = st.session_state.get("region", "us")
 
 # === ESTADO ATUAL ===
 all_reports = st.session_state.get("reports", [])
@@ -217,8 +227,8 @@ with policies_ph.container():
     elif all_reports:
         st.caption("Nenhuma política detectada ainda.")
 
-# === EXECUÇÃO (SEM LOOP INFINITO) ===
-if is_running:
+# === EXECUÇÃO (SÓ SE ESTIVER RODANDO E COM CREDENCIAIS) ===
+if is_running and client_id and client_secret:
     cfm = LexmarkCFMClient(client_id, client_secret, region)
 
     try:
@@ -235,6 +245,7 @@ if is_running:
         # === PARADA GARANTIDA ===
         if not printers_page:
             st.session_state.is_running = False
+            st.success("Análise concluída! Última página vazia detectada.")
             st.rerun()
 
         if page >= 100:
