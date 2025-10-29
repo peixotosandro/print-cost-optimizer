@@ -15,14 +15,20 @@ st.markdown("""
 <style>
     .big-font { font-size: 28px !important; font-weight: bold; color: #ffffff; }
     .stButton>button { border-radius: 8px; height: 3rem; font-weight: bold; }
-    .stButton>button[kind="primary"] { background-color: #28a745; }  /* VERDE */
-    .stButton>button[kind="secondary"] { background-color: #dc3545; color: white; }  /* VERMELHO */
+    .stButton>button[kind="primary"] { background-color: #28a745; }
+    .stButton>button[kind="secondary"] { background-color: #dc3545; color: white; }
 </style>
 """, unsafe_allow_html=True)
 
 # === TÍTULO ===
 st.markdown('<p class="big-font">Print Cost Optimizer Agent</p>', unsafe_allow_html=True)
 st.markdown("**Análise em tempo real com API Lexmark Cloud Fleet Management**")
+
+# === PLACEHOLDERS GLOBAIS (FORA DO LOOP) ===
+status_ph = st.empty()
+metrics_ph = st.empty()
+table_ph = st.empty()
+policies_ph = st.empty()
 
 # === LOGGING ===
 logging.basicConfig(level=logging.INFO)
@@ -84,7 +90,6 @@ class PrintCostOptimizerAgent:
         supplies = printer.get('supplies', [])
         alerts = printer.get('alerts', [])
 
-        # Cor
         color = counters.get('colorPrintSideCount', 0)
         total = counters.get('printSideCount', 1)
         color_ratio = color / total if total > 0 else 0
@@ -93,7 +98,6 @@ class PrintCostOptimizerAgent:
             report["policies"].append("P&B padrão")
             report["savings_potential"] += 120
 
-        # Duplex
         duplex = counters.get('duplexSheetCount', 0)
         total_sheets = counters.get('printSheetCount', 1)
         duplex_ratio = duplex / total_sheets if total_sheets > 0 else 0
@@ -102,7 +106,6 @@ class PrintCostOptimizerAgent:
             report["policies"].append("Ativar duplex")
             report["savings_potential"] += 80
 
-        # Toner
         low_toner = [s for s in supplies if s.get('percentRemaining', 100) < 20 and s['type'] == 'Toner']
         if low_toner:
             colors = ", ".join([s['color'] for s in low_toner])
@@ -110,7 +113,6 @@ class PrintCostOptimizerAgent:
             report["policies"].append("Reposição auto")
             report["savings_potential"] += 50 * len(low_toner)
 
-        # Alertas
         critical = [a['issue'] for a in alerts if a.get('status') in ['ERROR', 'CRITICAL']]
         if critical:
             report["insights"].append(f"Erro: {len(critical)}")
@@ -136,7 +138,6 @@ if start_btn:
         st.error("Preencha as credenciais")
         st.stop()
 
-    # Reset seguro
     st.session_state.clear()
     st.session_state.reports = []
     st.session_state.page = 0
@@ -148,20 +149,15 @@ if stop_btn and st.session_state.get("is_running"):
     st.session_state.is_running = False
     st.rerun()
 
-# === EXECUÇÃO (SÓ SE ESTIVER RODANDO) ===
+# === EXECUÇÃO COM ATUALIZAÇÃO VISUAL ===
 if st.session_state.get("is_running", False):
     cfm = LexmarkCFMClient(client_id, client_secret, region)
-
-    # Placeholders
-    status_ph = st.empty()
-    metrics_ph = st.empty()
-    table_ph = st.empty()
-    policies_ph = st.empty()
 
     all_reports = st.session_state.reports
     page = st.session_state.page
 
     try:
+        # --- BUSCA ---
         with status_ph.container():
             st.info(f"Buscando página {page + 1}...")
 
@@ -179,12 +175,12 @@ if st.session_state.get("is_running", False):
             st.session_state.is_running = False
             st.rerun()
 
-        # Analisa
+        # --- ANÁLISE ---
         agent = PrintCostOptimizerAgent(printers_page)
         agent.analyze()
         new_reports = agent.reports
 
-        # Remove duplicatas por ID
+        # Remove duplicatas
         seen_ids = {r["id"] for r in all_reports}
         new_reports = [r for r in new_reports if r["id"] not in seen_ids]
         all_reports.extend(new_reports)
@@ -193,7 +189,7 @@ if st.session_state.get("is_running", False):
         st.session_state.reports = all_reports
         st.session_state.page = page + 1
 
-        # Dashboard
+        # --- DASHBOARD EM TEMPO REAL ---
         df = pd.DataFrame(all_reports)
         total_savings = df['savings_potential'].sum()
         high_impact = df[df['savings_potential'] > 100]
@@ -224,7 +220,8 @@ if st.session_state.get("is_running", False):
         if data.get('last', False):
             st.session_state.is_running = False
 
-        st.rerun()  # Só aqui!
+        # Força atualização
+        st.rerun()
 
     except Exception as e:
         st.error(f"Erro: {e}")
