@@ -49,7 +49,7 @@ class LexmarkCFMClient:
         self.token_expiry = 0
 
     def _get_token(self) -> str:
-        if hasattr(self, 'token_expiry') and self.token_expiry > int(datetime.now().timestamp()) + 60:
+        if time.time() < self.token_expiry - 60:
             return self.access_token
         payload = {
             "grant_type": "client_credentials",
@@ -61,7 +61,7 @@ class LexmarkCFMClient:
             response.raise_for_status()
             data = response.json()
             self.access_token = data['access_token']
-            self.token_expiry = int(datetime.now().timestamp()) + 3500
+            self.token_expiry = int(time.time()) + 3500
             return self.access_token
         except Exception as e:
             st.error(f"Erro ao obter token: {e}")
@@ -75,7 +75,7 @@ class LexmarkCFMClient:
 
 # === AGENTE DE ANÁLISE ===
 class PrintCostOptimizerAgent:
-    def __init__(self, printers: List[Dict[str万辆]):
+    def __init__(self, printers: List[Dict[str, Any]]):
         self.printers = printers
         self.reports = []
 
