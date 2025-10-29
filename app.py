@@ -91,7 +91,7 @@ class LexmarkCFMClient:
         try:
             with st.spinner("Buscando todas as impressoras (paginação)..."):
                 while True:
-                    params = {"page": page, "page": page_size}
+                    params = {"page": page}
                     response = requests.get(
                         f"{self.base_url}/v1.0/assets",
                         headers=self._get_headers(),
