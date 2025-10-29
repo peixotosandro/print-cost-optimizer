@@ -182,9 +182,16 @@ with metrics_ph.container():
 # --- TABELA ---
 with table_ph.container():
     if not high_impact.empty:
-        df_display = high_impact[['id', 'model', 'savings_potential', 'insights']].copy()
-        df_display['savings_potential'] = df_display['savings_potential'].apply(lambda x: f"R$ {x:,.0f}")
-        df_display['insights'] = df_display['insights'].apply(lambda x: " | ".join(x))
+        df_display = high_impact[['id', 'model', 'savings_potential', 'insights', 'policies']].copy()
+                
+        # Renomeia colunas
+        df_display.columns = ['Serial Number', 'Modelo', 'Economia Estimada', 'Insights', 'Política']
+                
+        # Formata valores
+        df_display['Economia Estimada'] = df_display['Economia Estimada'].apply(lambda x: f"R$ {x:,.0f}")
+        df_display['Insights'] = df_display['Insights'].apply(lambda x: " | ".join(x))
+        df_display['Política'] = df_display['Política'].apply(lambda x: " • ".join(x) if x else "Nenhuma")
+                
         st.dataframe(df_display, use_container_width=True, hide_index=True)
     elif all_reports:
         st.info("Nenhuma impressora com alta prioridade ainda.")
