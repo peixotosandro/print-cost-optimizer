@@ -1,4 +1,4 @@
-# Print Cost Optimizer Agent
+# Print Fleet Optimizer Agent
 
 Agente de IA para redução de custos de impressão com integração Lexmark CFM.
 
