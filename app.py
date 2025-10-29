@@ -279,10 +279,9 @@ with metrics_ph.container():
         1 for r in all_reports if any(r.get(k, False) for k in ['pb_padrao', 'duplex', 'reposicao', 'manutencao'])
     )
 
-    c1, c2, c3 = st.columns(3)
+    c1, c2 = st.columns(2)
     c1.metric("Impressoras Analisadas", analyzed_printers)
     c2.metric("Com Recomendações", recommendations)
-    c3.metric("Políticas Ativas", active_policies)
 
 # === TABELA INTERATIVA NATIVE (st.dataframe) ===
 with table_ph.container():
@@ -314,7 +313,7 @@ with table_ph.container():
     else:
         st.info("Clique em 'Analisar Parque' para começar.")
 
-# === POLÍTICAS ATIVAS ===
+# === POLÍTICAS ===
 with policies_ph.container():
     active = []
     if any(r.get('pb_padrao', False) for r in all_reports): active.append("P&B padrão")
@@ -323,7 +322,7 @@ with policies_ph.container():
     if any(r.get('manutencao', False) for r in all_reports): active.append("Manutenção")
 
     if active:
-        st.markdown("**Políticas Ativas:** " + " • ".join(active))
+        st.markdown("**Políticas:** " + " • ".join(active))
     elif all_reports:
         st.caption("Nenhuma política detectada.")
 
