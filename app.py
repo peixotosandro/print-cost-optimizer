@@ -21,6 +21,7 @@ st.markdown("""
     .stButton>button { border-radius: 8px; height: 3rem; font-weight: bold; }
     .stButton>button[kind="primary"] { background-color: #28a745; }
     .stButton>button[kind="secondary"] { background-color: #dc3545; color: white; }
+    .policy-check { text-align: center; font-size: 18px; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -75,7 +76,7 @@ class LexmarkCFMClient:
         }
 
 # === AGENTE DE ANÁLISE ===
-class PrintCostOptimizerAgent:
+class PrintFleetOptimizerAgent:
     def __init__(self, printers: List[Dict[str, Any]]):
         self.printers = printers
         self.reports = []
@@ -93,41 +94,44 @@ class PrintCostOptimizerAgent:
             "id": printer.get('serialNumber', 'N/A'),
             "model": printer.get('modelName', 'N/A'),
             "insights": [],
-            "policies": []
+            "pb_padrao": False,
+            "duplex": False,
+            "reposicao": False,
+            "manutencao": False
         }
 
         counters = printer.get('counters', {})
         supplies = printer.get('supplies', [])
         alerts = printer.get('alerts', [])
 
-        # 1. Alta cor
+        # 1. Alta cor → P&B padrão
         color = counters.get('colorPrintSideCount', 0)
         total = counters.get('printSideCount', 1)
         color_ratio = color / total if total > 0 else 0
         if color_ratio > 0.7:
             report["insights"].append(f"Cor: {color_ratio:.0%}")
-            report["policies"].append("P&B padrão")
+            report["pb_padrao"] = True
 
-        # 2. Baixo duplex
+        # 2. Baixo duplex → Ativar duplex
         duplex = counters.get('duplexSheetCount', 0)
         total_sheets = counters.get('printSheetCount', 1)
         duplex_ratio = duplex / total_sheets if total_sheets > 0 else 0
         if duplex_ratio < 0.5:
             report["insights"].append(f"Duplex: {duplex_ratio:.0%}")
-            report["policies"].append("Ativar duplex")
+            report["duplex"] = True
 
-        # 3. Toner baixo
+        # 3. Toner baixo → Reposição Suprimento
         low_toner = [s for s in supplies if s.get('percentRemaining', 100) < 20 and s['type'] == 'Toner']
         if low_toner:
             colors = ", ".join([s['color'] for s in low_toner])
             report["insights"].append(f"Toner: {colors}")
-            report["policies"].append("Reposição Suprimento")
+            report["reposicao"] = True
 
-        # 4. Alertas críticos
+        # 4. Alertas críticos → Manutenção
         critical = [a['issue'] for a in alerts if a.get('status') in ['ERROR', 'CRITICAL']]
         if critical:
             report["insights"].append(f"Erro: {len(critical)}")
-            report["policies"].append("Manutenção")
+            report["manutencao"] = True
 
         return report
 
@@ -169,7 +173,9 @@ is_running = st.session_state.get("is_running", False)
 
 # === DASHBOARD ===
 df = pd.DataFrame(all_reports)
-high_impact = df[df['policies'].map(len) > 0] if not df.empty else pd.DataFrame()
+high_impact = df[
+    df['pb_padrao'] | df['duplex'] | df['reposicao'] | df['manutencao']
+] if not df.empty else pd.DataFrame()
 
 # --- BARRA DE STATUS ---
 if is_running:
@@ -190,17 +196,28 @@ with metrics_ph.container():
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Impressoras", len(all_reports))
     c2.metric("Com Recomendações", len(high_impact))
-    c3.metric("Políticas Ativas", len(set(p for r in all_reports for p in r['policies'])))
+    c3.metric("Políticas Ativas", 
+              sum(1 for r in all_reports if any(r.get(k, False) for k in ['pb_padrao', 'duplex', 'reposicao', 'manutencao'])))
     c4.metric("Páginas", page)
 
-# --- TABELA ---
+# --- TABELA COM ÍCONES ---
 with table_ph.container():
     if not high_impact.empty:
-        df_display = high_impact[['id', 'model', 'insights', 'policies']].copy()
-        df_display.columns = ['Serial Number', 'Modelo', 'Insights', 'Aplicar Políticas']
-        df_display['Insights'] = df_display['Insights'].apply(lambda x: " | ".join(x))
-        df_display['Aplicar Políticas'] = df_display['Aplicar Políticas'].apply(lambda x: " • ".join(x) if x else "Nenhuma")
-        st.dataframe(df_display, use_container_width=True, hide_index=True)
+        df_display = high_impact[['id', 'model', 'insights', 'pb_padrao', 'duplex', 'reposicao', 'manutencao']].copy()
+        df_display.columns = ['Serial Number', 'Modelo', 'Insights', 'P&B padrão', 'Ativar duplex', 'Reposição Suprimento', 'Manutenção']
+        
+        # Formata insights
+        df_display['Insights'] = df_display['Insights'].apply(lambda x: " | ".join(x) if x else "Nenhum")
+
+        # ÍCONES: checked / unchecked
+        policy_cols = ['P&B padrão', 'Ativar duplex', 'Reposição Suprimento', 'Manutenção']
+        for col in policy_cols:
+            df_display[col] = df_display[col].apply(
+                lambda x: '<span class="policy-check">checked</span>' if x else '<span class="policy-check">unchecked</span>'
+            )
+
+        # Exibe com HTML
+        st.write(df_display.to_html(escape=False, index=False), unsafe_allow_html=True)
     elif all_reports:
         st.info("Nenhuma impressora com recomendações ainda.")
     else:
@@ -208,9 +225,14 @@ with table_ph.container():
 
 # --- POLÍTICAS ATIVAS ---
 with policies_ph.container():
-    policies = list(set(p for r in all_reports for p in r['policies']))
-    if policies:
-        st.markdown("**Políticas:** " + " • ".join(policies[:6]))
+    active = []
+    if any(r.get('pb_padrao', False) for r in all_reports): active.append("P&B padrão")
+    if any(r.get('duplex', False) for r in all_reports): active.append("Ativar duplex")
+    if any(r.get('reposicao', False) for r in all_reports): active.append("Reposição Suprimento")
+    if any(r.get('manutencao', False) for r in all_reports): active.append("Manutenção")
+    
+    if active:
+        st.markdown("**Políticas Ativas:** " + " • ".join(active[:6]))
     elif all_reports:
         st.caption("Nenhuma política detectada ainda.")
 
@@ -245,7 +267,7 @@ if is_running:
             st.warning("Parada de segurança: mais de 100 páginas.")
             st.rerun()
 
-        agent = PrintCostOptimizerAgent(printers_page)
+        agent = PrintFleetOptimizerAgent(printers_page)
         agent.analyze()
         new_reports = agent.reports
 
