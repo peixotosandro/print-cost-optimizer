@@ -124,7 +124,7 @@ class PrintCostOptimizerAgent:
         if low_toner:
             colors = ", ".join([s['color'] for s in low_toner])
             report["insights"].append(f"Toner: {colors}")
-            report["policies"].append("Reposição auto")
+            report["policies"].append("Reposição Suprimento")
             report["savings_potential"] += 50 * len(low_toner)
 
         # 4. Alertas críticos
@@ -196,7 +196,7 @@ else:
 with metrics_ph.container():
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Impressoras", len(all_reports))
-    c2.metric("Economia Atual", f"R$ {total_savings:,.0f}")
+    c2.metric("Economia Estimada", f"R$ {total_savings:,.0f}")
     c3.metric("Alta Prioridade", len(high_impact))
     c4.metric("Páginas", page)
 
@@ -204,10 +204,10 @@ with metrics_ph.container():
 with table_ph.container():
     if not high_impact.empty:
         df_display = high_impact[['id', 'model', 'savings_potential', 'insights', 'policies']].copy()
-        df_display.columns = ['Serial Number', 'Modelo', 'Economia Estimada', 'Insights', 'Política']
+        df_display.columns = ['Serial Number', 'Modelo', 'Economia Estimada', 'Insights', 'Aplicar Políticas']
         df_display['Economia Estimada'] = df_display['Economia Estimada'].apply(lambda x: f"R$ {x:,.0f}")
         df_display['Insights'] = df_display['Insights'].apply(lambda x: " | ".join(x))
-        df_display['Política'] = df_display['Política'].apply(lambda x: " • ".join(x) if x else "Nenhuma")
+        df_display['Aplicar Políticas'] = df_display['Aplicar Políticas'].apply(lambda x: " • ".join(x) if x else "Nenhuma")
         st.dataframe(df_display, use_container_width=True, hide_index=True)
     elif all_reports:
         st.info("Nenhuma impressora com alta prioridade ainda.")
@@ -218,7 +218,7 @@ with table_ph.container():
 with policies_ph.container():
     policies = list(set(p for r in all_reports for p in r['policies']))
     if policies:
-        st.markdown("**Políticas Ativas:** " + " • ".join(policies[:6]))
+        st.markdown("**Políticas:** " + " • ".join(policies[:6]))
     elif all_reports:
         st.caption("Nenhuma política detectada ainda.")
 
