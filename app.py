@@ -28,7 +28,7 @@ st.markdown("""
 st.markdown('<p class="big-font">Print Cost Optimizer Agent</p>', unsafe_allow_html=True)
 st.markdown("**Análise em tempo real com API Lexmark Cloud Fleet Management**")
 
-# === PLACEHOLDERS GLOBAIS ===
+# === PLACEHOLDERS GLOBAIS (DASHBOARD SEMPRE VISÍVEL) ===
 status_ph = st.empty()
 metrics_ph = st.empty()
 table_ph = st.empty()
@@ -136,14 +136,16 @@ class PrintCostOptimizerAgent:
         return report
 
 # === SIDEBAR ===
-st.sidebar.header("Lexmark CFM API")
-client_id = st.sidebar.text_input("Client ID", type="password")
-client_secret = st.sidebar.text_input("Client Secret", type="password")
-region = st.sidebar.selectbox("Região", ["us", "eu"])
+with st.sidebar:
+    st.header("Lexmark CFM API")
+    client_id = st.text_input("Client ID", type="password")
+    client_secret = st.text_input("Client Secret", type="password")
+    region = st.selectbox("Região", ["us", "eu"])
 
-st.sidebar.markdown("---")
-start_btn = st.sidebar.button("Conectar e Analisar", type="primary", use_container_width=True)
-stop_btn = st.sidebar.button("Parar Análise", type="secondary", use_container_width=True)
+    st.markdown("---")
+    start_btn = st.button("Conectar e Analisar", type="primary", use_container_width=True)
+    st.markdown("<br>", unsafe_allow_html=True)
+    stop_btn = st.button("Parar Análise", type="secondary", use_container_width=True)
 
 # === INICIAR ANÁLISE ===
 if start_btn:
@@ -151,10 +153,11 @@ if start_btn:
         st.error("Preencha Client ID e Secret")
         st.stop()
 
-    # SALVA CREDENCIAIS E ESTADO
-    st.session_state.client_id = client_id
-    st.session_state.client_secret = client_secret
-    st.session_state.region = region
+    # === LIMPAR SESSION STATE ===
+    keys_to_clear = list(st.session_state.keys())
+    for key in keys_to_clear:
+        del st.session_state[key]
+
     st.session_state.reports = []
     st.session_state.page = 0
     st.session_state.is_running = True
@@ -164,11 +167,6 @@ if start_btn:
 if stop_btn and st.session_state.get("is_running"):
     st.session_state.is_running = False
     st.rerun()
-
-# === PEGA CREDENCIAIS DO SESSION STATE ===
-client_id = st.session_state.get("client_id")
-client_secret = st.session_state.get("client_secret")
-region = st.session_state.get("region", "us")
 
 # === ESTADO ATUAL ===
 all_reports = st.session_state.get("reports", [])
@@ -224,8 +222,8 @@ with policies_ph.container():
     elif all_reports:
         st.caption("Nenhuma política detectada ainda.")
 
-# === EXECUÇÃO (SÓ SE ESTIVER RODANDO E COM CREDENCIAIS) ===
-if is_running and client_id and client_secret:
+# === EXECUÇÃO (PARA COM CERTEZA) ===
+if is_running:
     cfm = LexmarkCFMClient(client_id, client_secret, region)
 
     try:
@@ -239,11 +237,20 @@ if is_running and client_id and client_secret:
         data = response.json()
         printers_page = data.get('content', [])
 
-        # === PARADA GARANTIDA ===
-        if not printers_page:
+        # === PEGA TOTAL DE PÁGINAS (SE DISPONÍVEL) ===
+        total_pages = data.get('totalPages')
+        if total_pages is not None and page >= total_pages:
             st.session_state.is_running = False
+            st.success(f"Análise concluída! {page} páginas processadas.")
             st.rerun()
 
+        # === PARA SE PÁGINA VAZIA ===
+        if not printers_page:
+            st.session_state.is_running = False
+            st.success(f"Análise concluída! {page} páginas • {len(all_reports)} impressoras.")
+            st.rerun()
+
+        # === SEGURANÇA: MÁXIMO 100 PÁGINAS ===
         if page >= 100:
             st.session_state.is_running = False
             st.warning("Parada de segurança: mais de 100 páginas.")
@@ -262,6 +269,25 @@ if is_running and client_id and client_secret:
         # Atualiza estado
         st.session_state.reports = all_reports
         st.session_state.page = page + 1
+
+        # === ATUALIZA BARRA DE PROGRESSO (SE TIVER totalPages) ===
+        with status_ph.container():
+            if total_pages:
+                progress = (page + 1) / total_pages
+                st.markdown(f"""
+                <div style="background-color: #1e40af; padding: 12px; border-radius: 8px; text-align: center; color: white; font-weight: bold;">
+                    Buscando página {page + 1} de {total_pages} • {len(all_reports)} impressoras
+                </div>
+                <div style="background-color: #374151; border-radius: 8px; height: 8px; margin-top: 8px;">
+                    <div style="background-color: #10b981; width: {progress*100:.1f}%; height: 100%; border-radius: 8px;"></div>
+                </div>
+                """, unsafe_allow_html=True)
+            else:
+                st.markdown(f"""
+                <div style="background-color: #1e40af; padding: 12px; border-radius: 8px; text-align: center; color: white; font-weight: bold;">
+                    Buscando página {page + 1} • {len(all_reports)} impressoras analisadas
+                </div>
+                """, unsafe_allow_html=True)
 
         st.rerun()
 
