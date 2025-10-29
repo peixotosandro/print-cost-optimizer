@@ -86,7 +86,7 @@ class LexmarkCFMClient:
         """
         all_assets: List[Dict[str, Any]] = []
         page = 0
-        page_size = 50
+        page_size = 25
 
         try:
             with st.spinner("Buscando todas as impressoras (paginação)..."):
