@@ -1,4 +1,5 @@
 import streamlit as st
+import streamlit.components.v1 as components
 import pandas as pd
 import requests
 import logging
@@ -213,27 +214,34 @@ with table_ph.container():
 
         html_table = df_display.to_html(escape=False, index=False, table_id="fleetTable")
 
-        st.markdown("""
+        html_code = f"""
+        <html>
+        <head>
             <link rel="stylesheet" href="https://cdn.datatables.net/1.13.6/css/jquery.dataTables.min.css">
             <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
             <script src="https://cdn.datatables.net/1.13.6/js/jquery.dataTables.min.js"></script>
+        </head>
+        <body>
+            {html_table}
             <script>
-            $(document).ready(function() {
-                $('#fleetTable').DataTable({
+            $(document).ready(function() {{
+                $('#fleetTable').DataTable({{
                     "pageLength": 15,
                     "order": [],
-                    "language": {
+                    "language": {{
                         "search": "Pesquisar:",
                         "lengthMenu": "Mostrar _MENU_ registros",
                         "info": "Mostrando _START_ a _END_ de _TOTAL_",
-                        "paginate": {"next": "Próximo", "previous": "Anterior"}
-                    }
-                });
-            });
+                        "paginate": {{"next": "Próximo", "previous": "Anterior"}}
+                    }}
+                }});
+            }});
             </script>
-        """, unsafe_allow_html=True)
+        </body>
+        </html>
+        """
 
-        st.markdown(html_table, unsafe_allow_html=True)
+        components.html(html_code, height=600, scrolling=True)
 
     elif all_reports:
         st.info("Nenhuma impressora com recomendações.")
