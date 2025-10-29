@@ -5,7 +5,7 @@ import requests
 import logging
 from datetime import datetime
 from typing import List, Dict, Any
-import time
+import time  # <-- ADICIONADO: CORRIGE O ERRO
 
 # === CONFIGURAÇÃO DA PÁGINA ===
 st.set_page_config(
@@ -23,7 +23,6 @@ st.markdown("""
     .stButton>button[kind="secondary"] { background-color: #dc3545; color: white; }
     .policy-x { text-align: center; font-weight: bold; font-size: 18px; color: #10b981; }
     .policy-empty { text-align: center; font-size: 18px; color: #6b7280; }
-    .sortable-table th { cursor: pointer; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -205,51 +204,22 @@ with metrics_ph.container():
     c3.metric("Políticas Ativas", 
               sum(1 for r in all_reports if any(r.get(k, False) for k in ['pb_padrao', 'duplex', 'reposicao', 'manutencao'])))
 
-# --- TABELA COM ORDENAÇÃO ---
+# --- TABELA COM "X" E ESPAÇO ---
 with table_ph.container():
     if not high_impact.empty:
-        # Cria DataFrame com colunas booleanas para ordenação
         df_display = high_impact[['id', 'model', 'insights', 'pb_padrao', 'duplex', 'reposicao', 'manutencao']].copy()
         df_display.columns = ['Serial Number', 'Modelo', 'Insights', 'P&B padrão', 'Ativar duplex', 'Reposição Suprimento', 'Manutenção']
         
-        # Converte insights para string ordenável
+        # Formata insights
         df_display['Insights'] = df_display['Insights'].apply(lambda x: " | ".join(x) if x else "Nenhum")
 
-        # === ORDENAÇÃO INTERATIVA ===
-        sort_col = st.selectbox(
-            "Ordenar por:",
-            options=['Serial Number', 'Modelo', 'Insights', 'P&B padrão', 'Ativar duplex', 'Reposição Suprimento', 'Manutenção'],
-            key="sort_select"
-        )
-        ascending = st.checkbox("Crescente", value=True, key="sort_asc")
-
-        # Mapeia coluna para nome original
-        col_map = {
-            'Serial Number': 'id',
-            'Modelo': 'model',
-            'Insights': 'insights',
-            'P&B padrão': 'pb_padrao',
-            'Ativar duplex': 'duplex',
-            'Reposição Suprimento': 'reposicao',
-            'Manutenção': 'manutencao'
-        }
-        sort_key = col_map[sort_col]
-
-        # Ordena o DataFrame
-        if sort_key in ['insights']:
-            df_display = df_display.sort_values(by='Insights', ascending=ascending)
-        else:
-            df_display = df_display.sort_values(by=sort_key, ascending=ascending)
-
-        # === APLICA "X" E ESPAÇO ===
+        # "X" ou espaço
         policy_cols = ['P&B padrão', 'Ativar duplex', 'Reposição Suprimento', 'Manutenção']
         for col in policy_cols:
-            original_col = col_map[col]
-            df_display[col] = high_impact[original_col].apply(
+            df_display[col] = df_display[col].apply(
                 lambda x: '<span class="policy-x">X</span>' if x else '<span class="policy-empty"> </span>'
             )
 
-        # Exibe com HTML ordenado
         st.write(df_display.to_html(escape=False, index=False), unsafe_allow_html=True)
     elif all_reports:
         st.info("Nenhuma impressora com recomendações.")
