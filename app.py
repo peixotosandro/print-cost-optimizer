@@ -1,11 +1,10 @@
-# app.py
 import streamlit as st
 import pandas as pd
 import requests
 import logging
 from datetime import datetime
 from typing import List, Dict, Any
-import time  # <-- ADICIONADO: CORRIGE O ERRO
+import time
 
 # === CONFIGURAÇÃO DA PÁGINA ===
 st.set_page_config(
@@ -28,9 +27,9 @@ st.markdown("""
 
 # === TÍTULO ===
 st.markdown('<p class="big-font">Print Fleet Optimizer Agent</p>', unsafe_allow_html=True)
-st.markdown("**Análise com API Lexmark Cloud Fleet Management**")
+st.markdown("**Análise única com API Lexmark Cloud Fleet Management**")
 
-# === PLACEHOLDERS GLOBAIS ===
+# === PLACEHOLDERS ===
 status_ph = st.empty()
 metrics_ph = st.empty()
 table_ph = st.empty()
@@ -77,7 +76,6 @@ class LexmarkCFMClient:
         }
 
     def get_all_assets(self) -> List[Dict[str, Any]]:
-        """Consulta única com pageSize máximo (1000)"""
         try:
             with st.spinner("Buscando todas as impressoras..."):
                 response = requests.get(
@@ -163,13 +161,12 @@ with st.sidebar:
     st.markdown("---")
     start_btn = st.button("Analisar Frota", type="primary", use_container_width=True)
 
-# === INICIAR ANÁLISE (ÚNICA) ===
+# === EXECUÇÃO ===
 if start_btn:
     if not client_id or not client_secret:
         st.error("Preencha Client ID e Secret")
         st.stop()
 
-    # Limpa estado
     for key in list(st.session_state.keys()):
         del st.session_state[key]
 
@@ -180,7 +177,6 @@ if start_btn:
         st.warning("Nenhuma impressora encontrada ou erro na API.")
         st.stop()
 
-    # Análise única
     with st.spinner("Analisando todas as impressoras..."):
         agent = PrintFleetOptimizerAgent(printers)
         agent.analyze()
@@ -189,14 +185,12 @@ if start_btn:
     st.success(f"**Análise concluída!** {len(printers)} impressoras analisadas.")
     st.rerun()
 
-# === ESTADO ATUAL ===
+# === RESULTADOS ===
 all_reports = st.session_state.get("reports", [])
 df = pd.DataFrame(all_reports)
-high_impact = df[
-    df['pb_padrao'] | df['duplex'] | df['reposicao'] | df['manutencao']
-] if not df.empty else pd.DataFrame()
+high_impact = df[df['pb_padrao'] | df['duplex'] | df['reposicao'] | df['manutencao']] if not df.empty else pd.DataFrame()
 
-# --- MÉTRICAS ---
+# === MÉTRICAS ===
 with metrics_ph.container():
     c1, c2, c3 = st.columns(3)
     c1.metric("Impressoras", len(all_reports))
@@ -204,36 +198,56 @@ with metrics_ph.container():
     c3.metric("Políticas Ativas", 
               sum(1 for r in all_reports if any(r.get(k, False) for k in ['pb_padrao', 'duplex', 'reposicao', 'manutencao'])))
 
-# --- TABELA COM "X" E ESPAÇO ---
+# === TABELA INTERATIVA COM DATATABLES ===
 with table_ph.container():
     if not high_impact.empty:
         df_display = high_impact[['id', 'model', 'insights', 'pb_padrao', 'duplex', 'reposicao', 'manutencao']].copy()
         df_display.columns = ['Serial Number', 'Modelo', 'Insights', 'P&B padrão', 'Ativar duplex', 'Reposição Suprimento', 'Manutenção']
-        
-        # Formata insights
         df_display['Insights'] = df_display['Insights'].apply(lambda x: " | ".join(x) if x else "Nenhum")
 
-        # "X" ou espaço
         policy_cols = ['P&B padrão', 'Ativar duplex', 'Reposição Suprimento', 'Manutenção']
         for col in policy_cols:
             df_display[col] = df_display[col].apply(
                 lambda x: '<span class="policy-x">X</span>' if x else '<span class="policy-empty"> </span>'
             )
 
-        st.write(df_display.to_html(escape=False, index=False), unsafe_allow_html=True)
+        html_table = df_display.to_html(escape=False, index=False, table_id="fleetTable")
+
+        st.markdown("""
+            <link rel="stylesheet" href="https://cdn.datatables.net/1.13.6/css/jquery.dataTables.min.css">
+            <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+            <script src="https://cdn.datatables.net/1.13.6/js/jquery.dataTables.min.js"></script>
+            <script>
+            $(document).ready(function() {
+                $('#fleetTable').DataTable({
+                    "pageLength": 15,
+                    "order": [],
+                    "language": {
+                        "search": "Pesquisar:",
+                        "lengthMenu": "Mostrar _MENU_ registros",
+                        "info": "Mostrando _START_ a _END_ de _TOTAL_",
+                        "paginate": {"next": "Próximo", "previous": "Anterior"}
+                    }
+                });
+            });
+            </script>
+        """, unsafe_allow_html=True)
+
+        st.markdown(html_table, unsafe_allow_html=True)
+
     elif all_reports:
         st.info("Nenhuma impressora com recomendações.")
     else:
         st.info("Clique em 'Analisar Frota' para começar.")
 
-# --- POLÍTICAS ATIVAS ---
+# === POLÍTICAS ATIVAS ===
 with policies_ph.container():
     active = []
     if any(r.get('pb_padrao', False) for r in all_reports): active.append("P&B padrão")
     if any(r.get('duplex', False) for r in all_reports): active.append("Ativar duplex")
     if any(r.get('reposicao', False) for r in all_reports): active.append("Reposição Suprimento")
     if any(r.get('manutencao', False) for r in all_reports): active.append("Manutenção")
-    
+
     if active:
         st.markdown("**Políticas Ativas:** " + " • ".join(active))
     elif all_reports:
