@@ -5,6 +5,7 @@ import requests
 import logging
 from datetime import datetime
 from typing import List, Dict, Any
+import time  # <-- ADICIONADO: CORRIGE O ERRO
 
 # === CONFIGURAÇÃO DA PÁGINA ===
 st.set_page_config(
@@ -51,7 +52,7 @@ class LexmarkCFMClient:
         self.token_expiry = 0
 
     def _get_token(self) -> str:
-        if hasattr(self, 'token_expiry') and time.time() < self.token_expiry - 60:
+        if time.time() < self.token_expiry - 60:
             return self.access_token
         payload = {
             "grant_type": "client_credentials",
@@ -82,7 +83,7 @@ class LexmarkCFMClient:
                 response = requests.get(
                     f"{self.base_url}/v1.0/assets",
                     headers=self._get_headers(),
-                    params={"pageSize": 1000},  # Máximo permitido
+                    params={"pageSize": 1000},
                     timeout=30
                 )
                 response.raise_for_status()
