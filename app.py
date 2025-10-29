@@ -5,7 +5,6 @@ import requests
 import logging
 from datetime import datetime
 from typing import List, Dict, Any
-import time
 
 # === CONFIGURAÇÃO DA PÁGINA ===
 st.set_page_config(
@@ -28,7 +27,7 @@ st.markdown("""
 
 # === TÍTULO ===
 st.markdown('<p class="big-font">Print Fleet Optimizer Agent</p>', unsafe_allow_html=True)
-st.markdown("**Análise em tempo real com API Lexmark Cloud Fleet Management**")
+st.markdown("**Análise única com API Lexmark Cloud Fleet Management**")
 
 # === PLACEHOLDERS GLOBAIS ===
 status_ph = st.empty()
@@ -52,7 +51,7 @@ class LexmarkCFMClient:
         self.token_expiry = 0
 
     def _get_token(self) -> str:
-        if time.time() < self.token_expiry - 60:
+        if hasattr(self, 'token_expiry') and time.time() < self.token_expiry - 60:
             return self.access_token
         payload = {
             "grant_type": "client_credentials",
@@ -75,6 +74,23 @@ class LexmarkCFMClient:
             'Authorization': f'Bearer {self._get_token()}',
             'Accept': 'application/json'
         }
+
+    def get_all_assets(self) -> List[Dict[str, Any]]:
+        """Consulta única com pageSize máximo (1000)"""
+        try:
+            with st.spinner("Buscando todas as impressoras..."):
+                response = requests.get(
+                    f"{self.base_url}/v1.0/assets",
+                    headers=self._get_headers(),
+                    params={"pageSize": 1000},  # Máximo permitido
+                    timeout=30
+                )
+                response.raise_for_status()
+                data = response.json()
+                return data.get('content', [])
+        except Exception as e:
+            st.error(f"Erro na API: {e}")
+            return []
 
 # === AGENTE DE ANÁLISE ===
 class PrintFleetOptimizerAgent:
@@ -144,62 +160,48 @@ with st.sidebar:
     region = st.selectbox("Região", ["us", "eu"])
 
     st.markdown("---")
-    start_btn = st.button("Conectar e Analisar", type="primary", use_container_width=True)
-    st.markdown("<br>", unsafe_allow_html=True)
-    stop_btn = st.button("Parar Análise", type="secondary", use_container_width=True)
+    start_btn = st.button("Analisar Frota", type="primary", use_container_width=True)
 
-# === INICIAR ANÁLISE ===
+# === INICIAR ANÁLISE (ÚNICA) ===
 if start_btn:
     if not client_id or not client_secret:
         st.error("Preencha Client ID e Secret")
         st.stop()
 
+    # Limpa estado
     for key in list(st.session_state.keys()):
         del st.session_state[key]
 
-    st.session_state.reports = []
-    st.session_state.page = 0
-    st.session_state.is_running = True
-    st.rerun()
+    cfm = LexmarkCFMClient(client_id, client_secret, region)
+    printers = cfm.get_all_assets()
 
-# === PARAR ANÁLISE ===
-if stop_btn and st.session_state.get("is_running"):
-    st.session_state.is_running = False
+    if not printers:
+        st.warning("Nenhuma impressora encontrada ou erro na API.")
+        st.stop()
+
+    # Análise única
+    with st.spinner("Analisando todas as impressoras..."):
+        agent = PrintFleetOptimizerAgent(printers)
+        agent.analyze()
+        st.session_state.reports = agent.reports
+
+    st.success(f"**Análise concluída!** {len(printers)} impressoras analisadas.")
     st.rerun()
 
 # === ESTADO ATUAL ===
 all_reports = st.session_state.get("reports", [])
-page = st.session_state.get("page", 0)
-is_running = st.session_state.get("is_running", False)
-
-# === DASHBOARD ===
 df = pd.DataFrame(all_reports)
 high_impact = df[
     df['pb_padrao'] | df['duplex'] | df['reposicao'] | df['manutencao']
 ] if not df.empty else pd.DataFrame()
 
-# --- BARRA DE STATUS ---
-if is_running:
-    with status_ph.container():
-        st.markdown(f"""
-        <div style="background-color: #1e40af; padding: 12px; border-radius: 8px; text-align: center; color: white; font-weight: bold;">
-            Buscando página {page + 1} • {len(all_reports)} impressoras analisadas
-        </div>
-        <div style="background-color: #374151; border-radius: 8px; height: 8px; margin-top: 8px;">
-            <div style="background-color: #10b981; width: 100%; height: 100%; border-radius: 8px;"></div>
-        </div>
-        """, unsafe_allow_html=True)
-else:
-    status_ph.empty()
-
 # --- MÉTRICAS ---
 with metrics_ph.container():
-    c1, c2, c3, c4 = st.columns(4)
+    c1, c2, c3 = st.columns(3)
     c1.metric("Impressoras", len(all_reports))
     c2.metric("Com Recomendações", len(high_impact))
     c3.metric("Políticas Ativas", 
               sum(1 for r in all_reports if any(r.get(k, False) for k in ['pb_padrao', 'duplex', 'reposicao', 'manutencao'])))
-    c4.metric("Páginas", page)
 
 # --- TABELA COM "X" E ESPAÇO ---
 with table_ph.container():
@@ -210,19 +212,18 @@ with table_ph.container():
         # Formata insights
         df_display['Insights'] = df_display['Insights'].apply(lambda x: " | ".join(x) if x else "Nenhum")
 
-        # "X" ou espaço em branco
+        # "X" ou espaço
         policy_cols = ['P&B padrão', 'Ativar duplex', 'Reposição Suprimento', 'Manutenção']
         for col in policy_cols:
             df_display[col] = df_display[col].apply(
                 lambda x: '<span class="policy-x">X</span>' if x else '<span class="policy-empty"> </span>'
             )
 
-        # Exibe com HTML
         st.write(df_display.to_html(escape=False, index=False), unsafe_allow_html=True)
     elif all_reports:
-        st.info("Nenhuma impressora com recomendações ainda.")
+        st.info("Nenhuma impressora com recomendações.")
     else:
-        st.info("Aguardando dados...")
+        st.info("Clique em 'Analisar Frota' para começar.")
 
 # --- POLÍTICAS ATIVAS ---
 with policies_ph.container():
@@ -233,81 +234,12 @@ with policies_ph.container():
     if any(r.get('manutencao', False) for r in all_reports): active.append("Manutenção")
     
     if active:
-        st.markdown("**Políticas Ativas:** " + " • ".join(active[:6]))
+        st.markdown("**Políticas Ativas:** " + " • ".join(active))
     elif all_reports:
-        st.caption("Nenhuma política detectada ainda.")
-
-# === EXECUÇÃO ===
-if is_running:
-    cfm = LexmarkCFMClient(client_id, client_secret, region)
-
-    try:
-        response = requests.get(
-            f"{cfm.base_url}/v1.0/assets",
-            headers=cfm._get_headers(),
-            params={"pageNumber": page, "pageSize": 200},
-            timeout=15
-        )
-        response.raise_for_status()
-        data = response.json()
-        printers_page = data.get('content', [])
-
-        total_pages = data.get('totalPages')
-        if total_pages is not None and page >= total_pages:
-            st.session_state.is_running = False
-            st.success(f"Análise concluída! {page} páginas processadas.")
-            st.rerun()
-
-        if not printers_page:
-            st.session_state.is_running = False
-            st.success(f"Análise concluída! {page} páginas • {len(all_reports)} impressoras.")
-            st.rerun()
-
-        if page >= 100:
-            st.session_state.is_running = False
-            st.warning("Parada de segurança: mais de 100 páginas.")
-            st.rerun()
-
-        agent = PrintFleetOptimizerAgent(printers_page)
-        agent.analyze()
-        new_reports = agent.reports
-
-        seen_ids = {r["id"] for r in all_reports}
-        new_reports = [r for r in new_reports if r["id"] not in seen_ids]
-        all_reports.extend(new_reports)
-
-        st.session_state.reports = all_reports
-        st.session_state.page = page + 1
-
-        with status_ph.container():
-            if total_pages:
-                progress = (page + 1) / total_pages
-                st.markdown(f"""
-                <div style="background-color: #1e40af; padding: 12px; border-radius: 8px; text-align: center; color: white; font-weight: bold;">
-                    Buscando página {page + 1} de {total_pages} • {len(all_reports)} impressoras
-                </div>
-                <div style="background-color: #374151; border-radius: 8px; height: 8px; margin-top: 8px;">
-                    <div style="background-color: #10b981; width: {progress*100:.1f}%; height: 100%; border-radius: 8px;"></div>
-                </div>
-                """, unsafe_allow_html=True)
-            else:
-                st.markdown(f"""
-                <div style="background-color: #1e40af; padding: 12px; border-radius: 8px; text-align: center; color: white; font-weight: bold;">
-                    Buscando página {page + 1} • {len(all_reports)} impressoras analisadas
-                </div>
-                """, unsafe_allow_html=True)
-
-        st.rerun()
-
-    except Exception as e:
-        st.error(f"Erro na API: {e}")
-        st.session_state.is_running = False
-        st.rerun()
+        st.caption("Nenhuma política detectada.")
 
 # === RELATÓRIO FINAL ===
-elif st.session_state.get("reports"):
-    df = pd.DataFrame(st.session_state.reports)
-    st.success(f"**Análise Completa!** {len(df)} impressoras analisadas.")
+if st.session_state.get("reports"):
     csv = df.to_csv(index=False).encode()
     st.download_button(
         "Baixar Relatório Completo (CSV)",
