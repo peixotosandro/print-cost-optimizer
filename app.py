@@ -5,7 +5,7 @@ import requests
 import logging
 from datetime import datetime
 from typing import List, Dict, Any
-import time  # <-- ADICIONADO
+import time
 
 # === CONFIGURAÇÃO DA PÁGINA ===
 st.set_page_config(
@@ -136,16 +136,14 @@ class PrintCostOptimizerAgent:
         return report
 
 # === SIDEBAR ===
-with st.sidebar:
-    st.header("Lexmark CFM API")
-    client_id = st.text_input("Client ID", type="password", key="client_id")
-    client_secret = st.text_input("Client Secret", type="password", key="client_secret")
-    region = st.selectbox("Região", ["us", "eu"], key="region")
+st.sidebar.header("Lexmark CFM API")
+client_id = st.sidebar.text_input("Client ID", type="password")
+client_secret = st.sidebar.text_input("Client Secret", type="password")
+region = st.sidebar.selectbox("Região", ["us", "eu"])
 
-    st.markdown("---")
-    start_btn = st.button("Conectar e Analisar", type="primary", use_container_width=True, key="start")
-    st.markdown("<br>", unsafe_allow_html=True)
-    stop_btn = st.button("Parar Análise", type="secondary", use_container_width=True, key="stop")
+st.sidebar.markdown("---")
+start_btn = st.sidebar.button("Conectar e Analisar", type="primary", use_container_width=True)
+stop_btn = st.sidebar.button("Parar Análise", type="secondary", use_container_width=True)
 
 # === INICIAR ANÁLISE ===
 if start_btn:
@@ -153,11 +151,10 @@ if start_btn:
         st.error("Preencha Client ID e Secret")
         st.stop()
 
-    # SALVA CREDENCIAIS NO SESSION STATE
+    # SALVA CREDENCIAIS E ESTADO
     st.session_state.client_id = client_id
     st.session_state.client_secret = client_secret
     st.session_state.region = region
-
     st.session_state.reports = []
     st.session_state.page = 0
     st.session_state.is_running = True
@@ -245,7 +242,6 @@ if is_running and client_id and client_secret:
         # === PARADA GARANTIDA ===
         if not printers_page:
             st.session_state.is_running = False
-            st.success("Análise concluída! Última página vazia detectada.")
             st.rerun()
 
         if page >= 100:
