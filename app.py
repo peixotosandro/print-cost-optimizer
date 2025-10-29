@@ -17,6 +17,7 @@ st.markdown("""
     .stButton>button { border-radius: 8px; height: 3rem; font-weight: bold; }
     .stButton>button[kind="primary"] { background-color: #28a745; }
     .stButton>button[kind="secondary"] { background-color: #dc3545; color: white; }
+    .progress-bar { background: linear-gradient(90deg, #28a745 var(--progress), #333 var(--progress)); }
 </style>
 """, unsafe_allow_html=True)
 
@@ -24,7 +25,7 @@ st.markdown("""
 st.markdown('<p class="big-font">Print Cost Optimizer Agent</p>', unsafe_allow_html=True)
 st.markdown("**Análise em tempo real com API Lexmark Cloud Fleet Management**")
 
-# === PLACEHOLDERS GLOBAIS (FORA DO LOOP) ===
+# === PLACEHOLDERS GLOBAIS (DASHBOARD PRIMEIRO!) ===
 status_ph = st.empty()
 metrics_ph = st.empty()
 table_ph = st.empty()
@@ -142,6 +143,7 @@ if start_btn:
     st.session_state.reports = []
     st.session_state.page = 0
     st.session_state.is_running = True
+    st.session_state.total_pages = 1
     st.rerun()
 
 # === PARAR ===
@@ -149,18 +151,59 @@ if stop_btn and st.session_state.get("is_running"):
     st.session_state.is_running = False
     st.rerun()
 
-# === EXECUÇÃO COM ATUALIZAÇÃO VISUAL ===
-if st.session_state.get("is_running", False):
+# === DASHBOARD EM TEMPO REAL (SEMPRE VISÍVEL) ===
+all_reports = st.session_state.get("reports", [])
+page = st.session_state.get("page", 0)
+is_running = st.session_state.get("is_running", False)
+
+# --- STATUS BAR ---
+if is_running:
+    with status_ph.container():
+        st.markdown(f"""
+        <div style="background-color: #1e3a8a; padding: 10px; border-radius: 8px; text-align: center; color: white; font-weight: bold;">
+            Buscando página {page + 1}...
+        </div>
+        """, unsafe_allow_html=True)
+else:
+    status_ph.empty()
+
+# --- MÉTRICAS ---
+with metrics_ph.container():
+    df = pd.DataFrame(all_reports)
+    total_savings = df['savings_potential'].sum() if not df.empty else 0
+    high_impact = df[df['savings_potential'] > 100] if not df.empty else pd.DataFrame()
+    
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Impressoras", len(all_reports))
+    c2.metric("Economia Atual", f"R$ {total_savings:,.0f}")
+    c3.metric("Alta Prioridade", len(high_impact))
+    c4.metric("Páginas", page)
+
+# --- TABELA ---
+with table_ph.container():
+    if not high_impact.empty:
+        df_display = high_impact[['id', 'model', 'savings_potential', 'insights']].copy()
+        df_display['savings_potential'] = df_display['savings_potential'].apply(lambda x: f"R$ {x:,.0f}")
+        df_display['insights'] = df_display['insights'].apply(lambda x: " | ".join(x))
+        st.dataframe(df_display, use_container_width=True, hide_index=True)
+    elif all_reports:
+        st.info("Nenhuma impressora com alta prioridade ainda.")
+    else:
+        st.info("Aguardando dados...")
+
+# --- POLÍTICAS ---
+with policies_ph.container():
+    policies = list(set(p for r in all_reports for p in r['policies']))
+    if policies:
+        st.markdown("**Políticas Ativas:** " + " • ".join(policies[:6]))
+    elif all_reports:
+        st.caption("Nenhuma política detectada ainda.")
+
+# === EXECUÇÃO (SÓ SE ESTIVER RODANDO) ===
+if is_running:
     cfm = LexmarkCFMClient(client_id, client_secret, region)
 
-    all_reports = st.session_state.reports
-    page = st.session_state.page
-
     try:
-        # --- BUSCA ---
-        with status_ph.container():
-            st.info(f"Buscando página {page + 1}...")
-
         response = requests.get(
             f"{cfm.base_url}/v1.0/assets",
             headers=cfm._get_headers(),
@@ -175,52 +218,20 @@ if st.session_state.get("is_running", False):
             st.session_state.is_running = False
             st.rerun()
 
-        # --- ANÁLISE ---
         agent = PrintCostOptimizerAgent(printers_page)
         agent.analyze()
         new_reports = agent.reports
 
-        # Remove duplicatas
         seen_ids = {r["id"] for r in all_reports}
         new_reports = [r for r in new_reports if r["id"] not in seen_ids]
         all_reports.extend(new_reports)
 
-        # Atualiza estado
         st.session_state.reports = all_reports
         st.session_state.page = page + 1
 
-        # --- DASHBOARD EM TEMPO REAL ---
-        df = pd.DataFrame(all_reports)
-        total_savings = df['savings_potential'].sum()
-        high_impact = df[df['savings_potential'] > 100]
-
-        with status_ph.container():
-            st.success(f"Página {page + 1} • {len(all_reports)} impressoras")
-
-        with metrics_ph.container():
-            c1, c2, c3, c4 = st.columns(4)
-            c1.metric("Impressoras", len(all_reports))
-            c2.metric("Economia Atual", f"R$ {total_savings:,.0f}")
-            c3.metric("Alta Prioridade", len(high_impact))
-            c4.metric("Páginas", page + 1)
-
-        with table_ph.container():
-            if not high_impact.empty:
-                df_display = high_impact[['id', 'model', 'savings_potential', 'insights']].copy()
-                df_display['savings_potential'] = df_display['savings_potential'].apply(lambda x: f"R$ {x:,.0f}")
-                df_display['insights'] = df_display['insights'].apply(lambda x: " | ".join(x))
-                st.dataframe(df_display, use_container_width=True, hide_index=True)
-
-        with policies_ph.container():
-            policies = list(set(p for r in all_reports for p in r['policies']))
-            if policies:
-                st.markdown("**Políticas:** " + " • ".join(policies[:6]))
-
-        # Próxima página
         if data.get('last', False):
             st.session_state.is_running = False
 
-        # Força atualização
         st.rerun()
 
     except Exception as e:
@@ -234,5 +245,5 @@ elif st.session_state.get("reports"):
     total_savings = df['savings_potential'].sum()
     st.success(f"**Análise Completa!** {len(df)} impressoras • R$ {total_savings:,.0f}/mês")
     csv = df.to_csv(index=False).encode()
-    st.download_button("Baixar Relatório", csv, "relatorio_completo.csv", "text/csv")
+    st.download_button("Baixar Relatório Completo", csv, "relatorio_completo.csv", "text/csv")
     st.caption(f"Atualizado: {datetime.now().strftime('%d/%m/%Y %H:%M')}")
