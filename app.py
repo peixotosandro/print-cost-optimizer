@@ -192,11 +192,18 @@ high_impact = df[df['pb_padrao'] | df['duplex'] | df['reposicao'] | df['manutenc
 
 # === MÉTRICAS ===
 with metrics_ph.container():
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Impressoras", len(all_reports))
-    c2.metric("Com Recomendações", len(high_impact))
-    c3.metric("Políticas Ativas", 
-              sum(1 for r in all_reports if any(r.get(k, False) for k in ['pb_padrao', 'duplex', 'reposicao', 'manutencao'])))
+    total_printers = len(st.session_state.get("printers_raw", []))
+    analyzed_printers = len(all_reports)
+    recommendations = len(high_impact)
+    active_policies = sum(
+        1 for r in all_reports if any(r.get(k, False) for k in ['pb_padrao', 'duplex', 'reposicao', 'manutencao'])
+    )
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Impressoras Verificadas", total_printers)
+    c2.metric("Impressoras Analisadas", analyzed_printers)
+    c3.metric("Com Recomendações", recommendations)
+    c4.metric("Políticas Ativas", active_policies)
 
 # === TABELA INTERATIVA COM DATATABLES ===
 with table_ph.container():
