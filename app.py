@@ -28,7 +28,7 @@ st.markdown("""
 
 # === TÍTULO ===
 st.markdown('<p class="big-font">Print Fleet Optimizer Agent</p>', unsafe_allow_html=True)
-st.markdown("**Análise única com API Lexmark Cloud Fleet Management**")
+st.markdown("**Análise com API Lexmark Cloud Fleet Management**")
 
 # === PLACEHOLDERS GLOBAIS ===
 status_ph = st.empty()
