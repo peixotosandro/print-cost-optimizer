@@ -21,7 +21,8 @@ st.markdown("""
     .stButton>button { border-radius: 8px; height: 3rem; font-weight: bold; }
     .stButton>button[kind="primary"] { background-color: #28a745; }
     .stButton>button[kind="secondary"] { background-color: #dc3545; color: white; }
-    .policy-check { text-align: center; font-size: 18px; }
+    .policy-x { text-align: center; font-weight: bold; font-size: 18px; color: #10b981; }
+    .policy-empty { text-align: center; font-size: 18px; color: #6b7280; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -200,7 +201,7 @@ with metrics_ph.container():
               sum(1 for r in all_reports if any(r.get(k, False) for k in ['pb_padrao', 'duplex', 'reposicao', 'manutencao'])))
     c4.metric("Páginas", page)
 
-# --- TABELA COM ÍCONES ---
+# --- TABELA COM "X" E ESPAÇO ---
 with table_ph.container():
     if not high_impact.empty:
         df_display = high_impact[['id', 'model', 'insights', 'pb_padrao', 'duplex', 'reposicao', 'manutencao']].copy()
@@ -209,11 +210,11 @@ with table_ph.container():
         # Formata insights
         df_display['Insights'] = df_display['Insights'].apply(lambda x: " | ".join(x) if x else "Nenhum")
 
-        # ÍCONES: checked / unchecked
+        # "X" ou espaço em branco
         policy_cols = ['P&B padrão', 'Ativar duplex', 'Reposição Suprimento', 'Manutenção']
         for col in policy_cols:
             df_display[col] = df_display[col].apply(
-                lambda x: '<span class="policy-check">checked</span>' if x else '<span class="policy-check">unchecked</span>'
+                lambda x: '<span class="policy-x">X</span>' if x else '<span class="policy-empty"> </span>'
             )
 
         # Exibe com HTML
