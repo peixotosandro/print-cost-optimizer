@@ -161,29 +161,36 @@ with st.sidebar:
     st.markdown("---")
     start_btn = st.button("Analisar Parque", type="primary", use_container_width=True)
 
-# === EXECUÇÃO ===
+# === INICIAR ANÁLISE ===
 if start_btn:
     if not client_id or not client_secret:
         st.error("Preencha Client ID e Secret")
         st.stop()
 
-    for key in list(st.session_state.keys()):
-        del st.session_state[key]
+    # NÃO apagar todo o session_state aqui — apenas sobrescreva o que for necessário
+    # (evita perda de 'printers_raw' ou outras chaves úteis)
+    # if "reports" in st.session_state: del st.session_state["reports"]
+    # (Não é necessário deletar nada a não ser que você queira explicitamente limpar)
 
     cfm = LexmarkCFMClient(client_id, client_secret, region)
     printers = cfm.get_all_assets()
+
+    # GUARDA o total retornado pela API
+    st.session_state["printers_raw"] = printers
 
     if not printers:
         st.warning("Nenhuma impressora encontrada ou erro na API.")
         st.stop()
 
+    # Análise única
     with st.spinner("Analisando todas as impressoras..."):
         agent = PrintFleetOptimizerAgent(printers)
         agent.analyze()
         st.session_state.reports = agent.reports
 
-    st.success(f"**Análise concluída!** {len(printers)} impressoras analisadas.")
+    st.success(f"**Análise concluída!** {len(printers)} impressoras verificadas, {len(agent.reports)} analisadas.")
     st.rerun()
+
 
 # === RESULTADOS ===
 all_reports = st.session_state.get("reports", [])
