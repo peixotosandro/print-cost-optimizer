@@ -9,7 +9,7 @@ import time
 
 # === CONFIGURAÇÃO DA PÁGINA ===
 st.set_page_config(
-    page_title="Print Cost Optimizer",
+    page_title="Print Optimizer Agent",
     layout="wide",
     initial_sidebar_state="expanded"
 )
@@ -25,10 +25,10 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # === TÍTULO ===
-st.markdown('<p class="big-font">Print Cost Optimizer Agent</p>', unsafe_allow_html=True)
+st.markdown('<p class="big-font">Print Optimizer Agent</p>', unsafe_allow_html=True)
 st.markdown("**Análise em tempo real com API Lexmark Cloud Fleet Management**")
 
-# === PLACEHOLDERS GLOBAIS (DASHBOARD SEMPRE VISÍVEL) ===
+# === PLACEHOLDERS GLOBAIS ===
 status_ph = st.empty()
 metrics_ph = st.empty()
 table_ph = st.empty()
@@ -93,7 +93,6 @@ class PrintCostOptimizerAgent:
             "id": printer.get('serialNumber', 'N/A'),
             "model": printer.get('modelName', 'N/A'),
             "insights": [],
-            "savings_potential": 0.0,
             "policies": []
         }
 
@@ -108,7 +107,6 @@ class PrintCostOptimizerAgent:
         if color_ratio > 0.7:
             report["insights"].append(f"Cor: {color_ratio:.0%}")
             report["policies"].append("P&B padrão")
-            report["savings_potential"] += 120
 
         # 2. Baixo duplex
         duplex = counters.get('duplexSheetCount', 0)
@@ -117,7 +115,6 @@ class PrintCostOptimizerAgent:
         if duplex_ratio < 0.5:
             report["insights"].append(f"Duplex: {duplex_ratio:.0%}")
             report["policies"].append("Ativar duplex")
-            report["savings_potential"] += 80
 
         # 3. Toner baixo
         low_toner = [s for s in supplies if s.get('percentRemaining', 100) < 20 and s['type'] == 'Toner']
@@ -125,7 +122,6 @@ class PrintCostOptimizerAgent:
             colors = ", ".join([s['color'] for s in low_toner])
             report["insights"].append(f"Toner: {colors}")
             report["policies"].append("Reposição Suprimento")
-            report["savings_potential"] += 50 * len(low_toner)
 
         # 4. Alertas críticos
         critical = [a['issue'] for a in alerts if a.get('status') in ['ERROR', 'CRITICAL']]
@@ -153,9 +149,7 @@ if start_btn:
         st.error("Preencha Client ID e Secret")
         st.stop()
 
-    # === LIMPAR SESSION STATE ===
-    keys_to_clear = list(st.session_state.keys())
-    for key in keys_to_clear:
+    for key in list(st.session_state.keys()):
         del st.session_state[key]
 
     st.session_state.reports = []
@@ -173,10 +167,9 @@ all_reports = st.session_state.get("reports", [])
 page = st.session_state.get("page", 0)
 is_running = st.session_state.get("is_running", False)
 
-# === DASHBOARD (SEMPRE VISÍVEL) ===
+# === DASHBOARD ===
 df = pd.DataFrame(all_reports)
-total_savings = df['savings_potential'].sum() if not df.empty else 0
-high_impact = df[df['savings_potential'] > 100] if not df.empty else pd.DataFrame()
+high_impact = df[df['policies'].map(len) > 0] if not df.empty else pd.DataFrame()
 
 # --- BARRA DE STATUS ---
 if is_running:
@@ -196,21 +189,20 @@ else:
 with metrics_ph.container():
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Impressoras", len(all_reports))
-    c2.metric("Economia Estimada", f"R$ {total_savings:,.0f}")
-    c3.metric("Alta Prioridade", len(high_impact))
+    c2.metric("Com Recomendações", len(high_impact))
+    c3.metric("Políticas Ativas", len(set(p for r in all_reports for p in r['policies'])))
     c4.metric("Páginas", page)
 
-# --- TABELA COM COLUNAS EM PORTUGUÊS ---
+# --- TABELA ---
 with table_ph.container():
     if not high_impact.empty:
-        df_display = high_impact[['id', 'model', 'savings_potential', 'insights', 'policies']].copy()
-        df_display.columns = ['Serial Number', 'Modelo', 'Economia Estimada', 'Insights', 'Aplicar Políticas']
-        df_display['Economia Estimada'] = df_display['Economia Estimada'].apply(lambda x: f"R$ {x:,.0f}")
+        df_display = high_impact[['id', 'model', 'insights', 'policies']].copy()
+        df_display.columns = ['Serial Number', 'Modelo', 'Insights', 'Aplicar Políticas']
         df_display['Insights'] = df_display['Insights'].apply(lambda x: " | ".join(x))
         df_display['Aplicar Políticas'] = df_display['Aplicar Políticas'].apply(lambda x: " • ".join(x) if x else "Nenhuma")
         st.dataframe(df_display, use_container_width=True, hide_index=True)
     elif all_reports:
-        st.info("Nenhuma impressora com alta prioridade ainda.")
+        st.info("Nenhuma impressora com recomendações ainda.")
     else:
         st.info("Aguardando dados...")
 
@@ -222,7 +214,7 @@ with policies_ph.container():
     elif all_reports:
         st.caption("Nenhuma política detectada ainda.")
 
-# === EXECUÇÃO (PARA COM CERTEZA) ===
+# === EXECUÇÃO ===
 if is_running:
     cfm = LexmarkCFMClient(client_id, client_secret, region)
 
@@ -237,40 +229,33 @@ if is_running:
         data = response.json()
         printers_page = data.get('content', [])
 
-        # === PEGA TOTAL DE PÁGINAS (SE DISPONÍVEL) ===
         total_pages = data.get('totalPages')
         if total_pages is not None and page >= total_pages:
             st.session_state.is_running = False
             st.success(f"Análise concluída! {page} páginas processadas.")
             st.rerun()
 
-        # === PARA SE PÁGINA VAZIA ===
         if not printers_page:
             st.session_state.is_running = False
             st.success(f"Análise concluída! {page} páginas • {len(all_reports)} impressoras.")
             st.rerun()
 
-        # === SEGURANÇA: MÁXIMO 100 PÁGINAS ===
         if page >= 100:
             st.session_state.is_running = False
             st.warning("Parada de segurança: mais de 100 páginas.")
             st.rerun()
 
-        # === ANÁLISE DA PÁGINA ===
         agent = PrintCostOptimizerAgent(printers_page)
         agent.analyze()
         new_reports = agent.reports
 
-        # Remove duplicatas
         seen_ids = {r["id"] for r in all_reports}
         new_reports = [r for r in new_reports if r["id"] not in seen_ids]
         all_reports.extend(new_reports)
 
-        # Atualiza estado
         st.session_state.reports = all_reports
         st.session_state.page = page + 1
 
-        # === ATUALIZA BARRA DE PROGRESSO (SE TIVER totalPages) ===
         with status_ph.container():
             if total_pages:
                 progress = (page + 1) / total_pages
@@ -299,13 +284,12 @@ if is_running:
 # === RELATÓRIO FINAL ===
 elif st.session_state.get("reports"):
     df = pd.DataFrame(st.session_state.reports)
-    total_savings = df['savings_potential'].sum()
-    st.success(f"**Análise Completa!** {len(df)} impressoras • R$ {total_savings:,.0f}/mês")
+    st.success(f"**Análise Completa!** {len(df)} impressoras analisadas.")
     csv = df.to_csv(index=False).encode()
     st.download_button(
         "Baixar Relatório Completo (CSV)",
         csv,
-        "relatorio_completo.csv",
+        "relatorio_otimizacao.csv",
         "text/csv",
         use_container_width=True
     )
