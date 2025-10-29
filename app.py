@@ -39,7 +39,7 @@ policies_ph = st.empty()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# === CLIENTE LEXMARK CFM ===
+# === CLIENTE LEXMARK CFM (COM PAGINAÇÃO ROBUSTA) ===
 class LexmarkCFMClient:
     def __init__(self, client_id: str, client_secret: str, region: str = 'us'):
         self.client_id = client_id
@@ -51,7 +51,7 @@ class LexmarkCFMClient:
         self.token_expiry = 0
 
     def _get_token(self) -> str:
-        if time.time() < self.token_expiry - 60:
+        if self.access_token and time.time() < self.token_expiry - 60:
             return self.access_token
         payload = {
             "grant_type": "client_credentials",
@@ -76,20 +76,91 @@ class LexmarkCFMClient:
         }
 
     def get_all_assets(self) -> List[Dict[str, Any]]:
+        """
+        Busca todos os ativos paginando automaticamente.
+        Tenta suportar estruturas comuns de resposta:
+         - {"content": [...], "totalPages": N}
+         - {"assets": [...], "totalPages": N}
+         - {"items": [...], "totalPages": N}
+         - fallback: continua enquanto cada página retorna `pageSize` items
+        """
+        all_assets: List[Dict[str, Any]] = []
+        page = 0
+        page_size = 1000
+
         try:
-            with st.spinner("Buscando todas as impressoras..."):
-                response = requests.get(
-                    f"{self.base_url}/v1.0/assets",
-                    headers=self._get_headers(),
-                    params={"pageSize": 1000},
-                    timeout=30
-                )
-                response.raise_for_status()
-                data = response.json()
-                return data.get('content', [])
+            with st.spinner("Buscando todas as impressoras (paginação)..."):
+                while True:
+                    params = {"page": page, "pageSize": page_size}
+                    response = requests.get(
+                        f"{self.base_url}/v1.0/assets",
+                        headers=self._get_headers(),
+                        params=params,
+                        timeout=30
+                    )
+                    response.raise_for_status()
+                    data = response.json()
+
+                    # Tentar localizar a lista de assets em campos comuns
+                    page_items = None
+                    if isinstance(data, dict):
+                        if 'content' in data and isinstance(data['content'], list):
+                            page_items = data['content']
+                        elif 'assets' in data and isinstance(data['assets'], list):
+                            page_items = data['assets']
+                        elif 'items' in data and isinstance(data['items'], list):
+                            page_items = data['items']
+                        # Alguns endpoints retornam diretamente uma lista (pouco comum aqui)
+                        elif isinstance(data.get('data', None), list):
+                            page_items = data.get('data')
+                        # Caso a própria resposta seja uma lista
+                        elif isinstance(data, list):
+                            page_items = data
+
+                    # Se não encontramos via chaves, tentamos extrair heurística
+                    if page_items is None:
+                        # tenta interpretar como dict com uma única lista
+                        candidates = [v for v in (data.values() if isinstance(data, dict) else []) if isinstance(v, list)]
+                        page_items = candidates[0] if candidates else []
+
+                    # Adiciona os itens encontrados (pode ser vazio)
+                    all_assets.extend(page_items)
+
+                    # Determina se deve continuar: verifica totalPages ou compara tamanho
+                    total_pages = None
+                    if isinstance(data, dict):
+                        # checar chaves comuns
+                        total_pages = data.get('totalPages') or data.get('total_pages') or None
+                        # em algumas APIs há totalElements/totalCount
+                        total_count = data.get('totalElements') or data.get('totalCount') or data.get('total') or None
+                        if total_pages is not None:
+                            # totalPages costuma ser inteiro
+                            try:
+                                total_pages_int = int(total_pages)
+                                if page >= (total_pages_int - 1):
+                                    break
+                            except Exception:
+                                pass
+                        elif total_count is not None:
+                            try:
+                                total_count_int = int(total_count)
+                                # se já pegamos todos
+                                if len(all_assets) >= total_count_int:
+                                    break
+                            except Exception:
+                                pass
+
+                    # fallback por tamanho da página: se retornou menos que page_size, acabou
+                    if not page_items or len(page_items) < page_size:
+                        break
+
+                    # aumenta página (padrão: page começa em 0)
+                    page += 1
+
+                return all_assets
         except Exception as e:
-            st.error(f"Erro na API: {e}")
-            return []
+            st.error(f"Erro na API durante paginação: {e}")
+            return all_assets
 
 # === AGENTE DE ANÁLISE ===
 class PrintFleetOptimizerAgent:
@@ -116,14 +187,17 @@ class PrintFleetOptimizerAgent:
             "manutencao": False
         }
 
-        counters = printer.get('counters', {})
-        supplies = printer.get('supplies', [])
-        alerts = printer.get('alerts', [])
+        counters = printer.get('counters', {}) or {}
+        supplies = printer.get('supplies', []) or []
+        alerts = printer.get('alerts', []) or []
 
         # 1. Alta cor → P&B padrão
         color = counters.get('colorPrintSideCount', 0)
         total = counters.get('printSideCount', 1)
-        color_ratio = color / total if total > 0 else 0
+        try:
+            color_ratio = color / total if total > 0 else 0
+        except Exception:
+            color_ratio = 0
         if color_ratio > 0.7:
             report["insights"].append(f"Cor: {color_ratio:.0%}")
             report["pb_padrao"] = True
@@ -131,20 +205,23 @@ class PrintFleetOptimizerAgent:
         # 2. Baixo duplex → Ativar duplex
         duplex = counters.get('duplexSheetCount', 0)
         total_sheets = counters.get('printSheetCount', 1)
-        duplex_ratio = duplex / total_sheets if total_sheets > 0 else 0
+        try:
+            duplex_ratio = duplex / total_sheets if total_sheets > 0 else 0
+        except Exception:
+            duplex_ratio = 0
         if duplex_ratio < 0.5:
             report["insights"].append(f"Duplex: {duplex_ratio:.0%}")
             report["duplex"] = True
 
         # 3. Toner baixo → Reposição Suprimento
-        low_toner = [s for s in supplies if s.get('percentRemaining', 100) < 20 and s['type'] == 'Toner']
+        low_toner = [s for s in supplies if s.get('percentRemaining', 100) < 20 and s.get('type') == 'Toner']
         if low_toner:
-            colors = ", ".join([s['color'] for s in low_toner])
+            colors = ", ".join([s.get('color', 'Unknown') for s in low_toner])
             report["insights"].append(f"Toner: {colors}")
             report["reposicao"] = True
 
         # 4. Alertas críticos → Manutenção
-        critical = [a['issue'] for a in alerts if a.get('status') in ['ERROR', 'CRITICAL']]
+        critical = [a.get('issue') for a in alerts if a.get('status') in ['ERROR', 'CRITICAL']]
         if critical:
             report["insights"].append(f"Erro: {len(critical)}")
             report["manutencao"] = True
@@ -168,14 +245,11 @@ if start_btn:
         st.stop()
 
     # NÃO apagar todo o session_state aqui — apenas sobrescreva o que for necessário
-    # (evita perda de 'printers_raw' ou outras chaves úteis)
-    # if "reports" in st.session_state: del st.session_state["reports"]
-    # (Não é necessário deletar nada a não ser que você queira explicitamente limpar)
-
     cfm = LexmarkCFMClient(client_id, client_secret, region)
+    # get_all_assets agora faz paginação completa
     printers = cfm.get_all_assets()
 
-    # GUARDA o total retornado pela API
+    # GUARDA o total retornado pela API (todas as páginas)
     st.session_state["printers_raw"] = printers
 
     if not printers:
@@ -212,7 +286,7 @@ with metrics_ph.container():
     c3.metric("Com Recomendações", recommendations)
     c4.metric("Políticas Ativas", active_policies)
 
-# === TABELA INTERATIVA COM DATATABLES ===
+# === TABELA INTERATIVA NATIVE (st.dataframe) ===
 with table_ph.container():
     if not high_impact.empty:
         df_display = high_impact[['id', 'model', 'insights', 'pb_padrao', 'duplex', 'reposicao', 'manutencao']].copy()
@@ -224,14 +298,13 @@ with table_ph.container():
         # Formata insights
         df_display['Insights'] = df_display['Insights'].apply(lambda x: " | ".join(x) if x else "Nenhum")
 
-        # Substitui "X" HTML por símbolo unicode ✅ (ordenável)
+        # Substitui boolean por símbolo unicode ✅ (ordenável)
         def mark_symbol(value):
             return "✅" if value else ""
 
         for col in ['P&B padrão', 'Ativar duplex', 'Reposição Suprimento', 'Manutenção']:
             df_display[col] = df_display[col].apply(mark_symbol)
 
-        # Exibe tabela interativa nativa com ordenação e filtro
         st.dataframe(
             df_display,
             use_container_width=True,
@@ -267,3 +340,4 @@ if st.session_state.get("reports"):
         use_container_width=True
     )
     st.caption(f"Atualizado: {datetime.now().strftime('%d/%m/%Y %H:%M')}")
+
