@@ -1,5 +1,4 @@
 import streamlit as st
-import streamlit.components.v1 as components
 import pandas as pd
 import requests
 import logging
@@ -203,45 +202,27 @@ with metrics_ph.container():
 with table_ph.container():
     if not high_impact.empty:
         df_display = high_impact[['id', 'model', 'insights', 'pb_padrao', 'duplex', 'reposicao', 'manutencao']].copy()
-        df_display.columns = ['Serial Number', 'Modelo', 'Insights', 'P&B padrão', 'Ativar duplex', 'Reposição Suprimento', 'Manutenção']
+        df_display.columns = [
+            'Serial Number', 'Modelo', 'Insights',
+            'P&B padrão', 'Ativar duplex', 'Reposição Suprimento', 'Manutenção'
+        ]
+
+        # Formata insights
         df_display['Insights'] = df_display['Insights'].apply(lambda x: " | ".join(x) if x else "Nenhum")
 
-        policy_cols = ['P&B padrão', 'Ativar duplex', 'Reposição Suprimento', 'Manutenção']
-        for col in policy_cols:
-            df_display[col] = df_display[col].apply(
-                lambda x: '<span class="policy-x">X</span>' if x else '<span class="policy-empty"> </span>'
-            )
+        # Substitui "X" HTML por símbolo unicode ✅ (ordenável)
+        def mark_symbol(value):
+            return "✅" if value else ""
 
-        html_table = df_display.to_html(escape=False, index=False, table_id="fleetTable")
+        for col in ['P&B padrão', 'Ativar duplex', 'Reposição Suprimento', 'Manutenção']:
+            df_display[col] = df_display[col].apply(mark_symbol)
 
-        html_code = f"""
-        <html>
-        <head>
-            <link rel="stylesheet" href="https://cdn.datatables.net/1.13.6/css/jquery.dataTables.min.css">
-            <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
-            <script src="https://cdn.datatables.net/1.13.6/js/jquery.dataTables.min.js"></script>
-        </head>
-        <body>
-            {html_table}
-            <script>
-            $(document).ready(function() {{
-                $('#fleetTable').DataTable({{
-                    "pageLength": 15,
-                    "order": [],
-                    "language": {{
-                        "search": "Pesquisar:",
-                        "lengthMenu": "Mostrar _MENU_ registros",
-                        "info": "Mostrando _START_ a _END_ de _TOTAL_",
-                        "paginate": {{"next": "Próximo", "previous": "Anterior"}}
-                    }}
-                }});
-            }});
-            </script>
-        </body>
-        </html>
-        """
-
-        components.html(html_code, height=600, scrolling=True)
+        # Exibe tabela interativa nativa com ordenação e filtro
+        st.dataframe(
+            df_display,
+            use_container_width=True,
+            hide_index=True
+        )
 
     elif all_reports:
         st.info("Nenhuma impressora com recomendações.")
