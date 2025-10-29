@@ -27,7 +27,7 @@ st.markdown("""
 
 # === TÍTULO ===
 st.markdown('<p class="big-font">Print Fleet Optimizer Agent</p>', unsafe_allow_html=True)
-st.markdown("**Análise única com API Lexmark Cloud Fleet Management**")
+st.markdown("**Análise com API Lexmark Cloud Fleet Management**")
 
 # === PLACEHOLDERS ===
 status_ph = st.empty()
@@ -159,7 +159,7 @@ with st.sidebar:
     region = st.selectbox("Região", ["us", "eu"])
 
     st.markdown("---")
-    start_btn = st.button("Analisar Frota", type="primary", use_container_width=True)
+    start_btn = st.button("Analisar Parque", type="primary", use_container_width=True)
 
 # === EXECUÇÃO ===
 if start_btn:
