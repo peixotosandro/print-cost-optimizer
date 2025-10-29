@@ -227,7 +227,7 @@ with table_ph.container():
     elif all_reports:
         st.info("Nenhuma impressora com recomendações.")
     else:
-        st.info("Clique em 'Analisar Frota' para começar.")
+        st.info("Clique em 'Analisar Parque' para começar.")
 
 # === POLÍTICAS ATIVAS ===
 with policies_ph.container():
