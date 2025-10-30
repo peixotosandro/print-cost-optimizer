@@ -256,11 +256,51 @@ if start_btn:
         st.warning("Nenhuma impressora encontrada ou erro na API.")
         st.stop()
 
-    # Análise única
-    with st.spinner("Analisando todas as impressoras..."):
-        agent = PrintFleetOptimizerAgent(printers)
-        agent.analyze()
-        st.session_state.reports = agent.reports
+    # === ANÁLISE EM TEMPO REAL ===
+    progress_ph = st.empty()
+    table_ph = st.empty()
+    metrics_ph = st.empty()
+
+    agent = PrintFleetOptimizerAgent([])
+
+    progress_text = progress_ph.text("🔍 Iniciando análise...")
+    total = len(printers)
+
+    reports = []
+    for i, printer in enumerate(printers, 1):
+        report = agent._analyze_single_printer(printer)
+        reports.append(report)
+
+        # Atualiza métricas parciais
+        analyzed_printers = i
+        high_impact = [r for r in reports if any(r.get(k, False) for k in ['pb_padrao', 'duplex', 'reposicao', 'manutencao'])]
+        recommendations = len(high_impact)
+
+        with metrics_ph.container():
+            c1, c2 = st.columns(2)
+            c1.metric("Impressoras Analisadas", analyzed_printers)
+            c2.metric("Com Recomendações", recommendations)
+
+        # Atualiza tabela parcial
+        if high_impact:
+            df_display = pd.DataFrame(high_impact)[['id', 'model', 'insights', 'pb_padrao', 'duplex', 'reposicao', 'manutencao']]
+            df_display.columns = ['Serial Number', 'Modelo', 'Insights', 'P&B padrão', 'Ativar duplex', 'Reposição Suprimento', 'Manutenção']
+            df_display['Insights'] = df_display['Insights'].apply(lambda x: " | ".join(x) if x else "Nenhum")
+            for col in ['P&B padrão', 'Ativar duplex', 'Reposição Suprimento', 'Manutenção']:
+                df_display[col] = df_display[col].apply(lambda v: "✅" if v else "")
+            table_ph.dataframe(df_display, use_container_width=True, hide_index=True)
+        else:
+            table_ph.info("Nenhuma impressora com recomendações até o momento.")
+
+        progress_text.text(f"🔎 Analisando impressora {i}/{total}...")
+
+    st.session_state.reports = reports
+    progress_text.text("✅ Análise concluída!")
+
+
+
+
+    
 
     st.success(f"**Análise concluída!** {len(printers)} impressoras verificadas, {len(agent.reports)} analisadas.")
     st.rerun()
