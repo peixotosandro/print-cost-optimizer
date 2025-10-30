@@ -136,7 +136,10 @@ class PrintFleetOptimizerAgent:
         # 1. Alta cor → P&B padrão
         color = counters.get('colorPrintSideCount', 0)
         total = counters.get('printSideCount', 1)
-        color_ratio = color / total if total > 0 else 0
+        if isinstance(total, (int, float)) and total > 0:
+            color_ratio = (color or 0) / total
+        else:
+            color_ratio = 0
         if color_ratio > 0.7:
             report["insights"].append(f"Cor: {color_ratio:.0%}")
             report["pb_padrao"] = True
