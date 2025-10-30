@@ -144,7 +144,7 @@ class PrintFleetOptimizerAgent:
         # 2. Baixo duplex → Ativar duplex
         duplex = counters.get('duplexSheetCount', 0)
         total_sheets = counters.get('printSheetCount', 1)
-        duplex_ratio = duplex / total_sheets if total_sheets > 0 else 0
+        duplex_ratio = (duplex or 0) / (total_sheets or 1) if isinstance(total_sheets, (int, float)) and total_sheets > 0 else 0
         if duplex_ratio < 0.5:
             report["insights"].append(f"Duplex: {duplex_ratio:.0%}")
             report["duplex"] = True
