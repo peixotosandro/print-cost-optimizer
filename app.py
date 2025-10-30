@@ -150,7 +150,13 @@ class PrintFleetOptimizerAgent:
             report["duplex"] = True
 
         # 3. Toner baixo → Reposição Suprimento
-        low_toner = [s for s in supplies if s.get('percentRemaining', 100) < 20 and s.get('type') == 'Toner']
+        low_toner = [
+            s for s in (supplies or [])
+            if isinstance(s, dict)
+            and s.get('type') == 'toner'
+            and isinstance(s.get('percentRemaining'), (int, float))
+            and s.get('percentRemaining', 100) < 20
+        ]
         if low_toner:
             colors = ", ".join([s.get('color', 'Unknown') for s in low_toner])
             report["insights"].append(f"Toner: {colors}")
