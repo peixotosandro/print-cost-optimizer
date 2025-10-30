@@ -76,14 +76,7 @@ class LexmarkCFMClient:
         }
 
     def get_all_assets(self) -> List[Dict[str, Any]]:
-        """
-        Busca todos os ativos paginando automaticamente.
-        Tenta suportar estruturas comuns de resposta:
-         - {"content": [...], "totalPages": N}
-         - {"assets": [...], "totalPages": N}
-         - {"items": [...], "totalPages": N}
-         - fallback: continua enquanto cada página retorna `pageSize` items
-        """
+        """Busca todos os ativos com paginação automática."""
         all_assets: List[Dict[str, Any]] = []
         page = 0
         page_size = 100
@@ -101,7 +94,6 @@ class LexmarkCFMClient:
                     response.raise_for_status()
                     data = response.json()
 
-                    # Tentar localizar a lista de assets em campos comuns
                     page_items = None
                     if isinstance(data, dict):
                         if 'content' in data and isinstance(data['content'], list):
@@ -110,51 +102,38 @@ class LexmarkCFMClient:
                             page_items = data['assets']
                         elif 'items' in data and isinstance(data['items'], list):
                             page_items = data['items']
-                        # Alguns endpoints retornam diretamente uma lista (pouco comum aqui)
                         elif isinstance(data.get('data', None), list):
                             page_items = data.get('data')
-                        # Caso a própria resposta seja uma lista
-                        elif isinstance(data, list):
-                            page_items = data
+                    elif isinstance(data, list):
+                        page_items = data
 
-                    # Se não encontramos via chaves, tentamos extrair heurística
                     if page_items is None:
-                        # tenta interpretar como dict com uma única lista
                         candidates = [v for v in (data.values() if isinstance(data, dict) else []) if isinstance(v, list)]
                         page_items = candidates[0] if candidates else []
 
-                    # Adiciona os itens encontrados (pode ser vazio)
-                    all_assets.extend(page_items)
+                    all_assets.extend(page_items or [])
 
-                    # Determina se deve continuar: verifica totalPages ou compara tamanho
                     total_pages = None
+                    total_count = None
                     if isinstance(data, dict):
-                        # checar chaves comuns
-                        total_pages = data.get('totalPages') or data.get('total_pages') or None
-                        # em algumas APIs há totalElements/totalCount
-                        total_count = data.get('totalElements') or data.get('totalCount') or data.get('total') or None
-                        if total_pages is not None:
-                            # totalPages costuma ser inteiro
-                            try:
-                                total_pages_int = int(total_pages)
-                                if page >= (total_pages_int - 1):
-                                    break
-                            except Exception:
-                                pass
-                        elif total_count is not None:
-                            try:
-                                total_count_int = int(total_count)
-                                # se já pegamos todos
-                                if len(all_assets) >= total_count_int:
-                                    break
-                            except Exception:
-                                pass
+                        total_pages = data.get('totalPages') or data.get('total_pages')
+                        total_count = data.get('totalElements') or data.get('totalCount') or data.get('total')
 
-                    # fallback por tamanho da página: se retornou menos que page_size, acabou
-                    if not page_items or len(page_items) < page_size:
+                    if total_pages:
+                        try:
+                            if page >= int(total_pages) - 1:
+                                break
+                        except Exception:
+                            pass
+                    elif total_count:
+                        try:
+                            if len(all_assets) >= int(total_count):
+                                break
+                        except Exception:
+                            pass
+                    elif not page_items or len(page_items) < page_size:
                         break
 
-                    # aumenta página (padrão: page começa em 0)
                     page += 1
 
                 return all_assets
@@ -244,86 +223,100 @@ if start_btn:
         st.error("Preencha Client ID e Secret")
         st.stop()
 
-    # NÃO apagar todo o session_state aqui — apenas sobrescreva o que for necessário
     cfm = LexmarkCFMClient(client_id, client_secret, region)
-    # get_all_assets agora faz paginação completa
     printers = cfm.get_all_assets()
-
-    # GUARDA o total retornado pela API (todas as páginas)
     st.session_state["printers_raw"] = printers
 
     if not printers:
         st.warning("Nenhuma impressora encontrada ou erro na API.")
         st.stop()
 
-    # === ANÁLISE EM TEMPO REAL ===
-    progress_ph = st.empty()
-    table_ph = st.empty()
-    metrics_ph = st.empty()
-
+    # === ANÁLISE INCREMENTAL / EM TEMPO REAL ===
+    reports: List[Dict[str, Any]] = []
     agent = PrintFleetOptimizerAgent([])
 
-    progress_text = progress_ph.text("🔍 Iniciando análise...")
     total = len(printers)
+    status_ph.info(f"🔎 Iniciando análise de {total} impressoras...")
 
-    reports = []
-    for i, printer in enumerate(printers, 1):
-        report = agent._analyze_single_printer(printer)
+    # placeholders já declarados no topo (metrics_ph, table_ph)
+    # vamos atualizá-los a cada iteração
+    for i, printer in enumerate(printers, start=1):
+        # analisa uma impressora
+        try:
+            report = agent._analyze_single_printer(printer)
+        except Exception as e:
+            logger.warning(f"Erro ao analisar impressora {i}: {e}")
+            report = {
+                "id": printer.get('serialNumber', 'N/A'),
+                "model": printer.get('modelName', 'N/A'),
+                "insights": [f"Erro: {e}"],
+                "pb_padrao": False,
+                "duplex": False,
+                "reposicao": False,
+                "manutencao": False
+            }
+
         reports.append(report)
 
-        # Atualiza métricas parciais
-        analyzed_printers = i
-        high_impact = [r for r in reports if any(r.get(k, False) for k in ['pb_padrao', 'duplex', 'reposicao', 'manutencao'])]
-        recommendations = len(high_impact)
+        # salvar progresso parcial no session_state (permite inspeção externa)
+        st.session_state["reports_temp"] = reports
 
+        # recalcula métricas parciais
+        analyzed_printers = i
+        high_impact_partial = [r for r in reports if any(r.get(k, False) for k in ['pb_padrao', 'duplex', 'reposicao', 'manutencao'])]
+        recommendations = len(high_impact_partial)
+
+        # atualiza métricas (dois painéis)
         with metrics_ph.container():
             c1, c2 = st.columns(2)
             c1.metric("Impressoras Analisadas", analyzed_printers)
             c2.metric("Com Recomendações", recommendations)
 
-        # Atualiza tabela parcial
-        if high_impact:
-            df_display = pd.DataFrame(high_impact)[['id', 'model', 'insights', 'pb_padrao', 'duplex', 'reposicao', 'manutencao']]
-            df_display.columns = ['Serial Number', 'Modelo', 'Insights', 'P&B padrão', 'Ativar duplex', 'Reposição Suprimento', 'Manutenção']
-            df_display['Insights'] = df_display['Insights'].apply(lambda x: " | ".join(x) if x else "Nenhum")
-            for col in ['P&B padrão', 'Ativar duplex', 'Reposição Suprimento', 'Manutenção']:
-                df_display[col] = df_display[col].apply(lambda v: "✅" if v else "")
-            table_ph.dataframe(df_display, use_container_width=True, hide_index=True)
-        else:
-            table_ph.info("Nenhuma impressora com recomendações até o momento.")
+        # atualiza tabela parcial (mostra somente as impressoras com recomendações)
+        with table_ph.container():
+            if high_impact_partial:
+                df_display = pd.DataFrame(high_impact_partial)[['id', 'model', 'insights', 'pb_padrao', 'duplex', 'reposicao', 'manutencao']].copy()
+                df_display.columns = [
+                    'Serial Number', 'Modelo', 'Insights',
+                    'P&B padrão', 'Ativar duplex', 'Reposição Suprimento', 'Manutenção'
+                ]
+                df_display['Insights'] = df_display['Insights'].apply(lambda x: " | ".join(x) if x else "Nenhum")
+                def mark_symbol(value):
+                    return "✅" if value else ""
+                for col in ['P&B padrão', 'Ativar duplex', 'Reposição Suprimento', 'Manutenção']:
+                    df_display[col] = df_display[col].apply(mark_symbol)
+                st.dataframe(df_display, use_container_width=True, hide_index=True)
+            else:
+                st.info("Nenhuma impressora com recomendações até o momento.")
 
-        progress_text.text(f"🔎 Analisando impressora {i}/{total}...")
+        # atualiza status (progresso)
+        status_ph.info(f"🔎 Analisando {i}/{total} — último: {report.get('id', 'N/A')}")
 
-    st.session_state.reports = reports
-    progress_text.text("✅ Análise concluída!")
+        # opcional: pequeno delay para suavizar atualizações (remova se quiser máxima velocidade)
+        # time.sleep(0.05)
 
+    # ao fim, grava reports finais em session_state e limpa reports_temp
+    st.session_state["reports"] = reports
+    if "reports_temp" in st.session_state:
+        del st.session_state["reports_temp"]
 
+    status_ph.success(f"✅ Análise concluída! {len(reports)} impressoras processadas.")
 
-
-    
-
-    st.success(f"**Análise concluída!** {len(printers)} impressoras verificadas, {len(agent.reports)} analisadas.")
-    st.rerun()
-
-
-# === RESULTADOS ===
-all_reports = st.session_state.get("reports", [])
+# === RESULTADOS (quando houver) ===
+all_reports = st.session_state.get("reports", []) or []
 df = pd.DataFrame(all_reports)
 high_impact = df[df['pb_padrao'] | df['duplex'] | df['reposicao'] | df['manutencao']] if not df.empty else pd.DataFrame()
 
-# === MÉTRICAS ===
+# === MÉTRICAS (sempre visíveis) ===
 with metrics_ph.container():
     analyzed_printers = len(all_reports)
     recommendations = len(high_impact)
-    active_policies = sum(
-        1 for r in all_reports if any(r.get(k, False) for k in ['pb_padrao', 'duplex', 'reposicao', 'manutencao'])
-    )
 
     c1, c2 = st.columns(2)
     c1.metric("Impressoras Analisadas", analyzed_printers)
     c2.metric("Com Recomendações", recommendations)
 
-# === TABELA INTERATIVA NATIVE (st.dataframe) ===
+# === TABELA INTERATIVA (estado final ou vazio) ===
 with table_ph.container():
     if not high_impact.empty:
         df_display = high_impact[['id', 'model', 'insights', 'pb_padrao', 'duplex', 'reposicao', 'manutencao']].copy()
@@ -331,29 +324,18 @@ with table_ph.container():
             'Serial Number', 'Modelo', 'Insights',
             'P&B padrão', 'Ativar duplex', 'Reposição Suprimento', 'Manutenção'
         ]
-
-        # Formata insights
         df_display['Insights'] = df_display['Insights'].apply(lambda x: " | ".join(x) if x else "Nenhum")
-
-        # Substitui boolean por símbolo unicode ✅ (ordenável)
         def mark_symbol(value):
             return "✅" if value else ""
-
         for col in ['P&B padrão', 'Ativar duplex', 'Reposição Suprimento', 'Manutenção']:
             df_display[col] = df_display[col].apply(mark_symbol)
-
-        st.dataframe(
-            df_display,
-            use_container_width=True,
-            hide_index=True
-        )
-
+        st.dataframe(df_display, use_container_width=True, hide_index=True)
     elif all_reports:
         st.info("Nenhuma impressora com recomendações.")
     else:
         st.info("Clique em 'Analisar Parque' para começar.")
 
-# === POLÍTICAS ===
+# === RECOMENDAÇÕES (resumo textual) ===
 with policies_ph.container():
     active = []
     if any(r.get('pb_padrao', False) for r in all_reports): active.append("P&B padrão")
@@ -362,13 +344,14 @@ with policies_ph.container():
     if any(r.get('manutencao', False) for r in all_reports): active.append("Manutenção")
 
     if active:
-        st.markdown("**Políticas:** " + " • ".join(active))
+        st.markdown("**Recomendações:** " + " • ".join(active))
     elif all_reports:
-        st.caption("Nenhuma política detectada.")
+        st.caption("Nenhuma recomendação detectada.")
 
 # === RELATÓRIO FINAL ===
 if st.session_state.get("reports"):
-    csv = df.to_csv(index=False).encode()
+    df_final = pd.DataFrame(st.session_state.get("reports", []))
+    csv = df_final.to_csv(index=False).encode()
     st.download_button(
         "Baixar Relatório Completo (CSV)",
         csv,
@@ -377,4 +360,3 @@ if st.session_state.get("reports"):
         use_container_width=True
     )
     st.caption(f"Atualizado: {datetime.now().strftime('%d/%m/%Y %H:%M')}")
-
